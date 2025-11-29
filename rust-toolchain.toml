@@ -1,0 +1,6 @@
+# This file specifies the default version of Rust used
+# to compile this workspace and run CI jobs.
+
+[toolchain]
+channel = "1.91.1"
+components = ["rustfmt", "clippy"]

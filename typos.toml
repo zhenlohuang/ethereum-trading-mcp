@@ -1,0 +1,24 @@
+[files]
+extend-exclude = [
+    ".git",
+    "target",
+    "testdata",
+    "Cargo.toml",
+    "Cargo.lock",
+    "*.json",
+    "**/tests/**",
+    "**/test/**",
+    "**/*_test.*",
+    "**/*_tests.*",
+    "CHANGELOG.md",
+]
+
+[default.extend-words]
+ser = "ser"
+typ = "typ"
+# Ethereum 相关
+abi = "abi"
+wei = "wei"
+gwei = "gwei"
+keccak = "keccak"
+rlp = "rlp"
