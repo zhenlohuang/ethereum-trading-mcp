@@ -2,10 +2,34 @@
 name = "ethereum-trading-mcp"
 version = "0.1.0"
 edition = "2021"
+description = "A Model Context Protocol server for Ethereum trading operations"
+license = "MIT"
+repository = "https://github.com/yourusername/ethereum-trading-mcp"
 
 [dependencies]
-alloy = { version = "1.0.9", features = ["full"] }
-rmcp = { version = "0.9.1", features = ["server"] }
-tokio = { version = "1.48.0", features = ["full"] }
-tracing = "0.1.43"
-tracing-subscriber = "0.3.22"
+# Async runtime
+tokio = { version = "1.48", features = ["full"] }
+
+# Ethereum
+alloy = { version = "1.0", features = ["full"] }
+
+# MCP Protocol
+rmcp = { version = "0.9", features = ["server", "macros", "transport-io"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+dotenvy = "0.15"
+rust_decimal = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "ethereum-trading-mcp"
+path = "src/main.rs"

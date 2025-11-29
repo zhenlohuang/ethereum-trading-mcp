@@ -1,0 +1,19 @@
+{
+    "mcpServers": {
+        "ethereum-trading-mcp": {
+            "type": "stdio",
+            "command": "cargo",
+            "args": [
+                "run",
+                "-p",
+                "ethereum-trading-mcp"
+            ],
+            "env": {
+                "ETHEREUM_RPC_URL": "overwrite by -e <ETHEREUM_RPC_URL>",
+                "ETHEREUM_PRIVATE_KEY": "overwrite by -e <ETHEREUM_PRIVATE_KEY>",
+                "ETHEREUM_CHAIN_ID": "1",
+                "LOG_LEVEL": "info"
+            }
+        }
+    }
+}
