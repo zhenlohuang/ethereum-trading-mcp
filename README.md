@@ -63,7 +63,7 @@ cargo test
 
 ### 2. Test with MCP Inspector
 
-```json
+``` bash
 npx @modelcontextprotocol/inspector --config mcp.json \
   -e ETHEREUM_RPC_URL="https://mainnet.infura.io/v3/YOUR_API_KEY" \
   -e ETHEREUM_PRIVATE_KEY="0x..."
