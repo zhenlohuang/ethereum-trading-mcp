@@ -422,15 +422,15 @@ impl WalletManager {
 |----------|-------------|----------|---------|
 | `ETHEREUM_RPC_URL` | Ethereum JSON-RPC endpoint | Yes | - |
 | `ETHEREUM_PRIVATE_KEY` | Private key for wallet (hex) | Yes | - |
-| `ETHEREUM_CHAIN_ID` | Chain ID | No | 1 (mainnet) |
 | `LOG_LEVEL` | Logging level | No | `info` |
+
+> **Note:** Only Ethereum mainnet (chain ID 1) is currently supported.
 
 ### 5.2 Config Structure
 
 ```rust
 pub struct Config {
     pub rpc_url: String,
-    pub chain_id: u64,
     pub private_key: String,
     pub log_level: String,
 }
@@ -439,9 +439,6 @@ impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             rpc_url: env::var("ETHEREUM_RPC_URL")?,
-            chain_id: env::var("ETHEREUM_CHAIN_ID")
-                .unwrap_or_else(|_| "1".to_string())
-                .parse()?,
             private_key: env::var("ETHEREUM_PRIVATE_KEY")?,
             log_level: env::var("LOG_LEVEL")
                 .unwrap_or_else(|_| "info".to_string()),

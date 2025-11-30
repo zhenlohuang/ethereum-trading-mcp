@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use rmcp::{
     handler::server::router::tool::ToolRouter,
     handler::server::wrapper::Parameters,
@@ -10,12 +10,13 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
 use rust_decimal::Decimal;
+use std::str::FromStr;
 
 use crate::{
     config::Config,
     error::AppError,
     ethereum::{EthereumClient, WalletManager},
-    services::{BalanceService, PriceService, SwapService, TokenRegistry},
+    services::{BalanceService, PriceService, SwapService, TokenRegistry, TokenRegistryTrait},
     types::{parse_units, QuoteCurrency, SwapParams},
 };
 
@@ -27,7 +28,7 @@ pub struct EthereumTradingServer {
     balance_service: BalanceService,
     price_service: PriceService,
     swap_service: SwapService,
-    token_registry: Arc<TokenRegistry>,
+    token_registry: Arc<dyn TokenRegistryTrait>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -46,8 +47,8 @@ impl EthereumTradingServer {
         // Initialize wallet
         let wallet = WalletManager::from_private_key(&config.private_key)?;
 
-        // Initialize token registry with chain ID from config
-        let token_registry = Arc::new(TokenRegistry::new(config.chain_id));
+        // Initialize token registry with configured chain ID
+        let token_registry = Arc::new(TokenRegistry::new(config.chain_id)?);
 
         // Initialize services
         let balance_service = BalanceService::new(client.clone());
@@ -95,15 +96,52 @@ pub struct SwapTokensInput {
     pub to_token: String,
     /// Amount to swap (human-readable, e.g., "1.5").
     pub amount: String,
-    /// Slippage tolerance percentage (default: 0.5).
+    /// Slippage tolerance percentage as string (e.g., "0.5" for 0.5%). Default: "0.5".
     #[serde(default)]
-    pub slippage_tolerance: Option<f64>,
+    pub slippage_tolerance: Option<String>,
 }
 
-/// Parse an Ethereum address from a string.
+/// Parse and validate an Ethereum address from a string.
+///
+/// Validates:
+/// - Address format (0x + 40 hex characters)
+/// - Basic format checks
+///
+/// # Arguments
+/// * `s` - The address string to parse (with or without 0x prefix)
+///
+/// # Returns
+/// * `Ok(Address)` - If the address is valid
+/// * `Err(McpError)` - If the address is invalid with a descriptive error
 fn parse_address(s: &str) -> Result<Address, McpError> {
-    s.parse::<Address>()
-        .map_err(|_| McpError::invalid_params(format!("Invalid address: {}", s), None))
+    let trimmed = s.trim();
+
+    // Check for empty input
+    if trimmed.is_empty() {
+        return Err(McpError::invalid_params("Address cannot be empty", None));
+    }
+
+    // Check for correct prefix
+    if !trimmed.starts_with("0x") && !trimmed.starts_with("0X") {
+        return Err(McpError::invalid_params(format!("Address must start with '0x': {}", s), None));
+    }
+
+    // Check length (0x + 40 hex chars = 42 total)
+    if trimmed.len() != 42 {
+        return Err(McpError::invalid_params(
+            format!(
+                "Address must be 42 characters (0x + 40 hex chars), got {}: {}",
+                trimmed.len(),
+                s
+            ),
+            None,
+        ));
+    }
+
+    // Parse the address
+    trimmed.parse::<Address>().map_err(|e| {
+        McpError::invalid_params(format!("Invalid address format '{}': {}", s, e), None)
+    })
 }
 
 #[tool_router]
@@ -226,14 +264,41 @@ impl EthereumTradingServer {
                 )
             })?;
 
+        // Validate from_token != to_token
+        if from_entry.address == to_entry.address {
+            return Err(McpError::invalid_params(
+                "from_token and to_token cannot be the same",
+                None,
+            ));
+        }
+
         // Use decimals from TokenRegistry
         let amount_in = parse_units(&input.amount, from_entry.decimals)
             .map_err(|e| McpError::invalid_params(e, None))?;
 
+        // Validate amount is not zero
+        if amount_in == U256::ZERO {
+            return Err(McpError::invalid_params("Amount must be greater than zero", None));
+        }
+
         let slippage_tolerance = input
             .slippage_tolerance
-            .map(|s| Decimal::try_from(s).unwrap_or(Decimal::new(5, 1)))
+            .as_ref()
+            .map(|s| {
+                Decimal::from_str(s).map_err(|e| {
+                    McpError::invalid_params(format!("Invalid slippage_tolerance: {}", e), None)
+                })
+            })
+            .transpose()?
             .unwrap_or(Decimal::new(5, 1)); // Default 0.5%
+
+        // Validate slippage tolerance range (0-50%)
+        if slippage_tolerance < Decimal::ZERO || slippage_tolerance > Decimal::from(50) {
+            return Err(McpError::invalid_params(
+                "slippage_tolerance must be between 0 and 50 (percentage)",
+                None,
+            ));
+        }
 
         let params = SwapParams {
             from_token: from_entry.address,

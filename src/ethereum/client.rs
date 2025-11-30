@@ -66,26 +66,34 @@ impl EthereumClient {
 
     /// Get native ETH balance for an address.
     pub async fn get_eth_balance(&self, address: Address) -> Result<U256> {
-        let balance = self.provider.get_balance(address).await?;
-        Ok(balance)
+        self.provider
+            .get_balance(address)
+            .await
+            .map_err(|e| AppError::Rpc(format!("Failed to get balance for {}: {}", address, e)))
     }
 
     /// Execute a call (simulate transaction without broadcasting).
     pub async fn call(&self, tx: &TransactionRequest) -> Result<Bytes> {
-        let result = self.provider.call(tx.clone()).await?;
-        Ok(result)
+        self.provider
+            .call(tx.clone())
+            .await
+            .map_err(|e| AppError::Rpc(format!("Contract call failed (to: {:?}): {}", tx.to, e)))
     }
 
     /// Estimate gas for a transaction.
     pub async fn estimate_gas(&self, tx: &TransactionRequest) -> Result<u64> {
-        let gas = self.provider.estimate_gas(tx.clone()).await?;
-        Ok(gas)
+        self.provider
+            .estimate_gas(tx.clone())
+            .await
+            .map_err(|e| AppError::Rpc(format!("Gas estimation failed (to: {:?}): {}", tx.to, e)))
     }
 
     /// Get current gas price.
     pub async fn get_gas_price(&self) -> Result<u128> {
-        let gas_price = self.provider.get_gas_price().await?;
-        Ok(gas_price)
+        self.provider
+            .get_gas_price()
+            .await
+            .map_err(|e| AppError::Rpc(format!("Failed to get gas price: {}", e)))
     }
 
     /// Get the current block timestamp.

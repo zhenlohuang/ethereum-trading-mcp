@@ -1,14 +1,9 @@
 //! Uniswap V2 contract bindings.
 
-use alloy::{primitives::address, sol};
+use alloy::sol;
 
-/// Uniswap V2 Router address on Ethereum Mainnet.
-pub const UNISWAP_V2_ROUTER: alloy::primitives::Address =
-    address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
-
-/// Uniswap V2 Factory address on Ethereum Mainnet.
-pub const UNISWAP_V2_FACTORY: alloy::primitives::Address =
-    address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f");
+// Re-export Uniswap V2 addresses from constants module.
+pub use crate::ethereum::constants::{UNISWAP_V2_FACTORY, UNISWAP_V2_ROUTER};
 
 // Uniswap V2 Router interface
 sol! {

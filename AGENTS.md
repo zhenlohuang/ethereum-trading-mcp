@@ -5,7 +5,7 @@
 - Docs and references are in `docs/` (API reference, system design, screenshots). `mcp.dev.json` configures local MCP Inspector runs. Build artifacts land in `target/`.
 
 ## Setup, Build, and Run
-- Copy `.env.dev` values into your shell and set `ETHEREUM_RPC_URL`, `ETHEREUM_PRIVATE_KEY`, optional `ETHEREUM_CHAIN_ID`/`LOG_LEVEL`.
+- Copy `.env.dev` values into your shell and set `ETHEREUM_RPC_URL`, `ETHEREUM_PRIVATE_KEY`, optional `LOG_LEVEL`.
 - Build debug: `cargo build`; optimized: `cargo build --release`.
 - Run server: `cargo run -p ethereum-trading-mcp` (reads env vars). Release binary: `./target/release/ethereum-trading-mcp`.
 - Inspect via MCP Inspector: `npx @modelcontextprotocol/inspector --config mcp.dev.json -e ETHEREUM_RPC_URL=... -e ETHEREUM_PRIVATE_KEY=...`.
@@ -26,4 +26,4 @@
 
 ## Security & Configuration Tips
 - Never commit private keys or RPC URLs. Prefer `.env.dev` + local shell exports; avoid embedding secrets in tests.
-- Use mainnet defaults (`ETHEREUM_CHAIN_ID=1`) unless explicitly testing forks; document when using alternative endpoints.
+- Only Ethereum mainnet is currently supported.

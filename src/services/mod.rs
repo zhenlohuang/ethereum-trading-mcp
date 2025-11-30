@@ -8,4 +8,4 @@ pub mod token_registry;
 pub use balance::BalanceService;
 pub use price::PriceService;
 pub use swap::SwapService;
-pub use token_registry::{TokenEntry, TokenRegistry};
+pub use token_registry::{TokenEntry, TokenRegistry, TokenRegistryTrait};
