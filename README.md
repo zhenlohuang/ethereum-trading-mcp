@@ -136,6 +136,7 @@ src/
 ├── ethereum/
 │   ├── mod.rs              # Ethereum module root
 │   ├── client.rs           # Ethereum RPC client
+│   ├── constants.rs        # Ethereum constants (addresses, chain IDs)
 │   ├── wallet.rs           # Wallet management
 │   └── contracts/
 │       ├── mod.rs          # Contract module root
@@ -147,11 +148,20 @@ src/
 │   ├── mod.rs              # Services module root
 │   ├── balance.rs          # Balance query logic
 │   ├── price.rs            # Price fetching logic
-│   └── swap.rs             # Swap simulation logic
+│   ├── swap.rs             # Swap simulation logic
+│   └── token_registry.rs   # Token registry and metadata
 └── types/
     ├── mod.rs              # Types module root
     ├── token.rs            # Token-related types
     └── swap.rs             # Swap-related types
+
+tests/
+├── common/
+│   └── mod.rs              # Shared test utilities
+├── test_get_balance.rs     # Balance query integration tests
+├── test_get_token_price.rs # Price query integration tests
+├── test_server.rs          # MCP server integration tests
+└── test_swap_tokens.rs     # Swap simulation integration tests
 ```
 
 ## API Reference
