@@ -213,6 +213,22 @@ Simulate a token swap on Uniswap V2/V3.
 }
 ```
 
+## Screenshots
+
+### get_balance
+![](./docs/screenshots/get_balance.png)
+
+### get_token_price
+![](./docs/screenshots/get_token_price.png)
+
+### swap_tokens
+![](./docs/screenshots/swap_tokens.png)
+
+
+## Integrations
+
+- [Cherry Studio](https://cherrystudio.ai/): [Documentation](./docs/cherry_studio_intergration.md)
+
 ## Known Limitations
 
 - **Mainnet Only**: Currently supports Ethereum mainnet only (chain ID 1)
