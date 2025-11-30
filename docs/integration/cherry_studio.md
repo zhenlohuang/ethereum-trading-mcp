@@ -18,7 +18,6 @@ Integrate the Ethereum Trading MCP Server into Cherry Studio.
             "env": {
                 "ETHEREUM_RPC_URL": "https://mainnet.infura.io/v3/YOUR_API_KEY",
                 "ETHEREUM_PRIVATE_KEY": "0x...",
-                "ETHEREUM_CHAIN_ID": "1",
                 "LOG_LEVEL": "info"
             }
         }

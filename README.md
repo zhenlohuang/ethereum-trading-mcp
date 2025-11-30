@@ -33,7 +33,6 @@ export ETHEREUM_RPC_URL="https://mainnet.infura.io/v3/YOUR_API_KEY"
 export ETHEREUM_PRIVATE_KEY="0x..."
 
 # Optional
-ETHEREUM_CHAIN_ID=1
 LOG_LEVEL=info
 ```
 
