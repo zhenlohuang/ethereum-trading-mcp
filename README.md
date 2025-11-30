@@ -61,7 +61,7 @@ The server communicates via stdio and follows the MCP protocol.
 cargo test
 ```
 
-### 2. Test with MCP Inspector
+### 2. Inspect via MCP Inspector
 
 ``` bash
 npx @modelcontextprotocol/inspector --config mcp.dev.json \
@@ -121,7 +121,7 @@ See [API Reference](./docs/api_reference.md) for detailed documentation on avail
 
 ## Integrations
 
-- [Cherry Studio](https://cherrystudio.ai/): [Documentation](./docs/cherry_studio_intergration.md)
+- [Cherry Studio](https://cherrystudio.ai/): [Documentation](./docs/integration/cherry_studio.md)
 
 ## Known Limitations
 
