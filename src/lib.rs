@@ -32,4 +32,5 @@ pub mod types;
 
 pub use config::Config;
 pub use error::{AppError, Result};
+pub use ethereum::constants::*;
 pub use mcp::EthereumTradingServer;

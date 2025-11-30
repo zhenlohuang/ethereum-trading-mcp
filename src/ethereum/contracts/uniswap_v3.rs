@@ -1,18 +1,9 @@
 //! Uniswap V3 contract bindings.
 
-use alloy::{primitives::address, sol};
+use alloy::sol;
 
-/// Uniswap V3 SwapRouter address on Ethereum Mainnet.
-pub const UNISWAP_V3_ROUTER: alloy::primitives::Address =
-    address!("E592427A0AEce92De3Edee1F18E0157C05861564");
-
-/// Uniswap V3 Factory address on Ethereum Mainnet.
-pub const UNISWAP_V3_FACTORY: alloy::primitives::Address =
-    address!("1F98431c8aD98523631AE4a59f267346ea31F984");
-
-/// Uniswap V3 Quoter V2 address on Ethereum Mainnet.
-pub const UNISWAP_V3_QUOTER: alloy::primitives::Address =
-    address!("61fFE014bA17989E743c5F6cB21bF9697530B21e");
+// Re-export Uniswap V3 addresses from constants module.
+pub use crate::ethereum::constants::{UNISWAP_V3_FACTORY, UNISWAP_V3_QUOTER, UNISWAP_V3_ROUTER};
 
 /// Common fee tiers in Uniswap V3 (in basis points * 100).
 pub mod fee_tiers {

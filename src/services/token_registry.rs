@@ -14,12 +14,9 @@ use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
 
 use crate::error::{AppError, Result};
-use alloy::primitives::address;
-
-use crate::ethereum::contracts::{USDC_ADDRESS, WBTC_ADDRESS, WETH_ADDRESS};
-
-/// UNI token address (mainnet).
-const UNI_ADDRESS: Address = address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984");
+use crate::ethereum::constants::{
+    ETHEREUM_MAINNET_CHAIN_ID, UNI_ADDRESS, USDC_ADDRESS, WBTC_ADDRESS, WETH_ADDRESS,
+};
 
 // ============================================================================
 // Token List Sources
@@ -212,7 +209,7 @@ impl TokenRegistry {
         };
 
         // Pre-populate with well-known mainnet tokens as fallback
-        if chain_id == 1 {
+        if chain_id == ETHEREUM_MAINNET_CHAIN_ID {
             registry.populate_fallback_tokens();
         }
 
@@ -228,28 +225,28 @@ impl TokenRegistry {
                 symbol: "WETH".to_string(),
                 name: "Wrapped Ether".to_string(),
                 decimals: 18,
-                chain_id: 1,
+                chain_id: ETHEREUM_MAINNET_CHAIN_ID,
             },
             TokenEntry {
                 address: USDC_ADDRESS,
                 symbol: "USDC".to_string(),
                 name: "USD Coin".to_string(),
                 decimals: 6,
-                chain_id: 1,
+                chain_id: ETHEREUM_MAINNET_CHAIN_ID,
             },
             TokenEntry {
                 address: WBTC_ADDRESS,
                 symbol: "WBTC".to_string(),
                 name: "Wrapped BTC".to_string(),
                 decimals: 8,
-                chain_id: 1,
+                chain_id: ETHEREUM_MAINNET_CHAIN_ID,
             },
             TokenEntry {
                 address: UNI_ADDRESS,
                 symbol: "UNI".to_string(),
                 name: "Uniswap".to_string(),
                 decimals: 18,
-                chain_id: 1,
+                chain_id: ETHEREUM_MAINNET_CHAIN_ID,
             },
         ];
 
@@ -458,8 +455,9 @@ mod tests {
 
     #[test]
     fn test_registry_creation() {
-        let registry = TokenRegistry::new(1).expect("Failed to create registry");
-        assert_eq!(registry.chain_id, 1);
+        let registry =
+            TokenRegistry::new(ETHEREUM_MAINNET_CHAIN_ID).expect("Failed to create registry");
+        assert_eq!(registry.chain_id, ETHEREUM_MAINNET_CHAIN_ID);
         assert_eq!(registry.cache_ttl, DEFAULT_CACHE_TTL);
     }
 

@@ -47,8 +47,8 @@ impl EthereumTradingServer {
         // Initialize wallet
         let wallet = WalletManager::from_private_key(&config.private_key)?;
 
-        // Initialize token registry for mainnet (chain ID 1)
-        let token_registry = Arc::new(TokenRegistry::new(1)?);
+        // Initialize token registry with configured chain ID
+        let token_registry = Arc::new(TokenRegistry::new(config.chain_id)?);
 
         // Initialize services
         let balance_service = BalanceService::new(client.clone());

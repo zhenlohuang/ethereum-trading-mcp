@@ -1,6 +1,6 @@
 //! Common utilities for integration tests.
 
-use ethereum_trading_mcp::{Config, EthereumTradingServer};
+use ethereum_trading_mcp::{Config, EthereumTradingServer, ETHEREUM_MAINNET_CHAIN_ID};
 
 /// Helper to create a test server from environment variables.
 pub fn create_test_server() -> Option<EthereumTradingServer> {
@@ -15,7 +15,12 @@ pub fn create_test_server() -> Option<EthereumTradingServer> {
         return None;
     }
 
-    let config = Config { rpc_url, private_key, log_level: "warn".to_string() };
+    let config = Config {
+        rpc_url,
+        private_key,
+        log_level: "warn".to_string(),
+        chain_id: ETHEREUM_MAINNET_CHAIN_ID,
+    };
 
     EthereumTradingServer::new(config).ok()
 }

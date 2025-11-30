@@ -99,6 +99,7 @@ impl BalanceService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ethereum::constants::USDC_ADDRESS;
     use alloy::primitives::U256;
 
     #[test]
@@ -111,8 +112,7 @@ mod tests {
 
     #[test]
     fn test_token_info_erc20() {
-        let addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".parse::<Address>().unwrap();
-        let info = TokenInfo::erc20(addr, "USDC".to_string(), 6);
+        let info = TokenInfo::erc20(USDC_ADDRESS, "USDC".to_string(), 6);
         assert_eq!(info.symbol, "USDC");
         assert_eq!(info.decimals, 6);
         assert!(info.address.is_some());

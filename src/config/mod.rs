@@ -5,6 +5,7 @@
 use std::env;
 
 use crate::error::AppError;
+use crate::ethereum::constants::DEFAULT_CHAIN_ID;
 
 /// Application configuration.
 #[derive(Debug, Clone)]
@@ -15,6 +16,8 @@ pub struct Config {
     pub private_key: String,
     /// Logging level (default: info).
     pub log_level: String,
+    /// Chain ID (default: 1 for Ethereum mainnet).
+    pub chain_id: u64,
 }
 
 impl Config {
@@ -26,8 +29,7 @@ impl Config {
     ///
     /// Optional environment variables:
     /// - `LOG_LEVEL`: Logging level (default: info)
-    ///
-    /// Note: Only Ethereum mainnet (chain ID 1) is currently supported.
+    /// - `ETHEREUM_CHAIN_ID`: Chain ID (default: 1 for Ethereum mainnet)
     pub fn from_env() -> Result<Self, AppError> {
         // Load .env file if present
         let _ = dotenvy::dotenv();
@@ -42,6 +44,11 @@ impl Config {
 
         let log_level = env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
-        Ok(Self { rpc_url, private_key, log_level })
+        let chain_id = env::var("ETHEREUM_CHAIN_ID")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CHAIN_ID);
+
+        Ok(Self { rpc_url, private_key, log_level, chain_id })
     }
 }

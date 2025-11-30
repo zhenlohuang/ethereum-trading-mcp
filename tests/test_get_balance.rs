@@ -5,6 +5,7 @@
 mod common;
 
 use ethereum_trading_mcp::mcp::GetBalanceInput;
+use ethereum_trading_mcp::USDC_ADDRESS;
 use rmcp::handler::server::wrapper::Parameters;
 
 /// Test querying ETH balance for Vitalik's address.
@@ -48,12 +49,12 @@ async fn test_get_erc20_balance() {
     let server = skip_if_no_server!();
 
     // USDC contract address on mainnet
-    let usdc_address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    let usdc_address = format!("{:?}", USDC_ADDRESS);
 
     // Query a well-known address (Circle's treasury or any holder)
     let input = GetBalanceInput {
         address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045".to_string(),
-        token_address: Some(usdc_address.to_string()),
+        token_address: Some(usdc_address),
     };
 
     let result = server.get_balance(Parameters(input)).await;
