@@ -6,7 +6,7 @@ A Model Context Protocol (MCP) server built in Rust that enables AI agents to qu
 
 - **`get_balance`** - Query ETH and ERC20 token balances for any wallet address
 - **`get_token_price`** - Get current token prices in USD or ETH from on-chain sources (Chainlink, Uniswap)
-- **`swap_tokens`** - Simulate Uniswap V2/V3 swaps without on-chain execution
+- **`swap_tokens`** - Simulate Uniswap V2/V3 swaps using token symbols (WETH, ETH, USDC, USDT, DAI, WBTC, LINK, UNI)
 
 ## Prerequisites
 

@@ -7,9 +7,18 @@ pub mod uniswap_v3;
 
 use alloy::primitives::{address, Address};
 
-// TODO: Move the contract addresses to a config file or call API?
 // ============================================================================
-// Common Token Addresses (Ethereum Mainnet)
+// Common Token Addresses (Ethereum Mainnet) - Static Fallback
+// ============================================================================
+//
+// NOTE: For production use, prefer `TokenRegistry` from `crate::services::token_registry`
+// which provides:
+//   - Dynamic token list fetching from Uniswap Token Lists
+//   - In-memory caching with TTL
+//   - Multi-chain support
+//   - More comprehensive token coverage
+//
+// These static constants are kept as compile-time fallbacks for core tokens.
 // ============================================================================
 
 /// Wrapped Ether (WETH) address.
@@ -34,10 +43,13 @@ pub const LINK_ADDRESS: Address = address!("514910771AF9Ca656af840dff83E8264EcF9
 pub const UNI_ADDRESS: Address = address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984");
 
 // ============================================================================
-// Token Symbol Resolution
+// Token Symbol Resolution (Static Fallback)
 // ============================================================================
 
-/// Resolve a token symbol to an Address.
+/// Resolve a token symbol to an Address using static fallback data.
+///
+/// **Note**: For production use, prefer `TokenRegistry::resolve_symbol()` which
+/// provides dynamic token list support with caching.
 ///
 /// Supports common token symbols (case-insensitive):
 /// - WETH, ETH -> Wrapped Ether

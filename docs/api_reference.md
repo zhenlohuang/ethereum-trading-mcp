@@ -36,6 +36,13 @@ Query ETH or ERC20 token balance for a wallet address.
 
 Get current token price from on-chain sources.
 
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `token` | string | Yes | Token symbol (e.g., "WETH", "USDC", "UNI") |
+| `quote_currency` | string | No | "USD" or "ETH" (default: "USD") |
+
 **Request:**
 ```json
 {
@@ -43,7 +50,7 @@ Get current token price from on-chain sources.
   "params": {
     "name": "get_token_price",
     "arguments": {
-      "token_address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "token": "WETH",
       "quote_currency": "USD"
     }
   }
@@ -69,6 +76,15 @@ Get current token price from on-chain sources.
 
 Simulate a token swap on Uniswap V2/V3.
 
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `from_token` | string | Yes | Input token symbol (e.g., "WETH", "USDC") |
+| `to_token` | string | Yes | Output token symbol (e.g., "WETH", "USDC") |
+| `amount` | string | Yes | Amount to swap (human-readable, e.g., "1.5") |
+| `slippage_tolerance` | number | No | Slippage tolerance percentage (default: 0.5) |
+
 **Request:**
 ```json
 {
@@ -76,8 +92,8 @@ Simulate a token swap on Uniswap V2/V3.
   "params": {
     "name": "swap_tokens",
     "arguments": {
-      "from_token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-      "to_token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "from_token": "WETH",
+      "to_token": "USDC",
       "amount": "1.0",
       "slippage_tolerance": 0.5
     }
