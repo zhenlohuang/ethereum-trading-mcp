@@ -1,5 +1,6 @@
 /target
 .env.dev
+.env
 
 # Coverage reports
 lcov.info

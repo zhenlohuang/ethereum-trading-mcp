@@ -25,7 +25,7 @@ cd ethereum-trading-mcp
 
 ### 2. Set environment variables
 
-Create a `.env.dev` file in the project root:
+Create a `.env` file in the project root:
 
 ```bash
 # Required
