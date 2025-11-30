@@ -213,18 +213,6 @@ Simulate a token swap on Uniswap V2/V3.
 }
 ```
 
-## Design Decisions
-
-1. **Alloy over ethers-rs**: Chose the modern Alloy library for Ethereum interaction, which provides better type safety and is the successor to ethers-rs.
-
-2. **Layered Architecture**: Separated concerns into config, error, ethereum, services, and mcp layers for maintainability and testability.
-
-3. **On-chain Price Sources**: Prioritizes Chainlink oracles for price accuracy, with Uniswap V3/V2 pools as fallbacks.
-
-4. **Simulation-only Swaps**: Swap transactions are constructed and simulated via `eth_call` but never broadcast, ensuring safe exploration of trading scenarios.
-
-5. **Structured Logging**: Uses the `tracing` crate for structured, contextual logging that helps debug issues in production.
-
 ## Known Limitations
 
 - **Mainnet Only**: Currently supports Ethereum mainnet only (chain ID 1)
