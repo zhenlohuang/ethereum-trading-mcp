@@ -93,6 +93,11 @@ pub struct PriceInfo {
 
 /// Format a U256 value with decimals to a human-readable string.
 pub fn format_units(value: U256, decimals: u8) -> String {
+    // Handle zero case explicitly
+    if value == U256::ZERO {
+        return "0".to_string();
+    }
+
     let value_str = value.to_string();
     let decimals = decimals as usize;
 
@@ -104,7 +109,12 @@ pub fn format_units(value: U256, decimals: u8) -> String {
     if len <= decimals {
         // Value is less than 1, pad with zeros
         let zeros = decimals - len;
-        format!("0.{}{}", "0".repeat(zeros), value_str.trim_end_matches('0'))
+        let decimal_part = value_str.trim_end_matches('0');
+        if decimal_part.is_empty() {
+            "0".to_string()
+        } else {
+            format!("0.{}{}", "0".repeat(zeros), decimal_part)
+        }
     } else {
         // Split into integer and decimal parts
         let (integer, decimal) = value_str.split_at(len - decimals);
@@ -119,6 +129,18 @@ pub fn format_units(value: U256, decimals: u8) -> String {
 
 /// Parse a human-readable amount string to U256 with decimals.
 pub fn parse_units(amount: &str, decimals: u8) -> Result<U256, String> {
+    let amount = amount.trim();
+
+    // Check for empty input
+    if amount.is_empty() {
+        return Err("Amount cannot be empty".to_string());
+    }
+
+    // Check for negative numbers
+    if amount.starts_with('-') {
+        return Err("Amount cannot be negative".to_string());
+    }
+
     let decimals = decimals as usize;
     let parts: Vec<&str> = amount.split('.').collect();
 
@@ -197,5 +219,43 @@ mod tests {
         // 100 USDC
         let result = parse_units("100", 6).unwrap();
         assert_eq!(result, U256::from(100_000_000u64));
+    }
+
+    #[test]
+    fn test_format_units_zero() {
+        // Zero value should return "0"
+        assert_eq!(format_units(U256::ZERO, 18), "0");
+        assert_eq!(format_units(U256::ZERO, 6), "0");
+        assert_eq!(format_units(U256::ZERO, 0), "0");
+    }
+
+    #[test]
+    fn test_parse_units_negative() {
+        // Negative amounts should fail
+        let result = parse_units("-1", 18);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Amount cannot be negative");
+
+        let result = parse_units("-0.5", 18);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_units_empty() {
+        // Empty input should fail
+        let result = parse_units("", 18);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Amount cannot be empty");
+
+        // Whitespace only should also fail
+        let result = parse_units("   ", 18);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_units_whitespace_trimming() {
+        // Whitespace should be trimmed
+        let result = parse_units("  1.5  ", 18).unwrap();
+        assert_eq!(result, U256::from(1_500_000_000_000_000_000u64));
     }
 }

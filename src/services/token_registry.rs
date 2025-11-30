@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use serde::Deserialize;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
 
 use crate::error::{AppError, Result};
@@ -111,6 +111,7 @@ impl CacheState {
 /// - Remote fetching from Uniswap Token Lists
 /// - In-memory caching with 24-hour TTL
 /// - Auto-refresh on cache miss
+/// - Concurrent refresh protection (only one refresh at a time)
 pub struct TokenRegistry {
     /// HTTP client for fetching token lists.
     client: reqwest::Client,
@@ -122,6 +123,8 @@ pub struct TokenRegistry {
     cache_ttl: Duration,
     /// Cached token data.
     cache: Arc<RwLock<CacheState>>,
+    /// Semaphore to prevent concurrent cache refreshes.
+    refresh_semaphore: Semaphore,
 }
 
 impl TokenRegistry {
@@ -161,6 +164,7 @@ impl TokenRegistry {
             chain_id,
             cache_ttl,
             cache: Arc::new(RwLock::new(CacheState::new())),
+            refresh_semaphore: Semaphore::new(1),
         })
     }
 
@@ -228,14 +232,31 @@ impl TokenRegistry {
     }
 
     /// Ensure cache is fresh, refreshing if needed.
+    ///
+    /// Uses double-check locking pattern with a semaphore to prevent
+    /// multiple concurrent refresh operations.
     async fn ensure_fresh(&self) -> Result<()> {
+        // First check without acquiring the semaphore
         let needs_refresh = {
             let cache_guard = self.cache.read().await;
             cache_guard.is_expired(self.cache_ttl)
         };
 
         if needs_refresh {
-            self.refresh().await?;
+            // Acquire semaphore to prevent concurrent refreshes
+            let _permit = self.refresh_semaphore.acquire().await.map_err(|_| {
+                AppError::Transport("Failed to acquire refresh semaphore".to_string())
+            })?;
+
+            // Double-check: another task may have refreshed while we waited
+            let still_needs_refresh = {
+                let cache_guard = self.cache.read().await;
+                cache_guard.is_expired(self.cache_ttl)
+            };
+
+            if still_needs_refresh {
+                self.refresh().await?;
+            }
         }
         Ok(())
     }
