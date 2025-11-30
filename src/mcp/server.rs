@@ -14,8 +14,8 @@ use rust_decimal::Decimal;
 use crate::{
     config::Config,
     error::AppError,
-    ethereum::{contracts::resolve_token_symbol, EthereumClient, WalletManager},
-    services::{BalanceService, PriceService, SwapService},
+    ethereum::{EthereumClient, WalletManager},
+    services::{BalanceService, PriceService, SwapService, TokenRegistry},
     types::{parse_units, QuoteCurrency, SwapParams},
 };
 
@@ -27,6 +27,7 @@ pub struct EthereumTradingServer {
     balance_service: BalanceService,
     price_service: PriceService,
     swap_service: SwapService,
+    token_registry: Arc<TokenRegistry>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -45,6 +46,9 @@ impl EthereumTradingServer {
         // Initialize wallet
         let wallet = WalletManager::from_private_key(&config.private_key)?;
 
+        // Initialize token registry with chain ID from config
+        let token_registry = Arc::new(TokenRegistry::new(config.chain_id));
+
         // Initialize services
         let balance_service = BalanceService::new(client.clone());
         let price_service = PriceService::new(client.clone(), balance_service.clone());
@@ -52,7 +56,13 @@ impl EthereumTradingServer {
 
         tracing::info!("Ethereum Trading MCP Server initialized successfully");
 
-        Ok(Self { balance_service, price_service, swap_service, tool_router: Self::tool_router() })
+        Ok(Self {
+            balance_service,
+            price_service,
+            swap_service,
+            token_registry,
+            tool_router: Self::tool_router(),
+        })
     }
 }
 
@@ -69,13 +79,8 @@ pub struct GetBalanceInput {
 /// Input parameters for the get_token_price tool.
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetTokenPriceInput {
-    /// Token contract address (0x...). Required if `token_symbol` is not provided.
-    #[serde(default)]
-    pub token_address: Option<String>,
-    /// Token symbol. Only supports: WETH, ETH, USDC, USDT, DAI, WBTC, LINK, UNI.
-    /// Required if `token_address` is not provided.
-    #[serde(default)]
-    pub token_symbol: Option<String>,
+    /// Token symbol (e.g., "WETH", "USDC", "UNI").
+    pub token: String,
     /// Quote currency: "USD" or "ETH". Defaults to "USD".
     #[serde(default)]
     pub quote_currency: Option<String>,
@@ -84,9 +89,9 @@ pub struct GetTokenPriceInput {
 /// Input parameters for the swap_tokens tool.
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 pub struct SwapTokensInput {
-    /// Input token address (0x...).
+    /// Input token symbol (e.g., "WETH", "USDC").
     pub from_token: String,
-    /// Output token address (0x...).
+    /// Output token symbol (e.g., "WETH", "USDC").
     pub to_token: String,
     /// Amount to swap (human-readable, e.g., "1.5").
     pub amount: String,
@@ -134,40 +139,31 @@ impl EthereumTradingServer {
     /// Get current token price in USD or ETH.
     ///
     /// Fetches prices from on-chain sources (Chainlink oracles or Uniswap pools).
-    /// Provide either `token_address` or `token_symbol` (not both).
+    /// Token symbols are resolved using Uniswap Token List.
     #[tool(
-        description = "Get current token price in USD or ETH from on-chain sources. When using token_symbol, only supports: WETH, ETH, USDC, USDT, DAI, WBTC, LINK, UNI. For other tokens, use token_address instead."
+        description = "Get current token price in USD or ETH from on-chain sources. Supports any token from Uniswap Token List (e.g., WETH, USDC, UNI, LINK, etc.)."
     )]
     pub async fn get_token_price(
         &self,
         Parameters(input): Parameters<GetTokenPriceInput>,
     ) -> Result<String, McpError> {
         tracing::info!(
-            token_address = ?input.token_address,
-            token_symbol = ?input.token_symbol,
+            token = %input.token,
             quote = ?input.quote_currency,
             "get_token_price called"
         );
 
-        // Resolve token address: token_address takes priority over token_symbol
-        let token_address = if let Some(addr) = &input.token_address {
-            parse_address(addr)?
-        } else if let Some(symbol) = &input.token_symbol {
-            resolve_token_symbol(symbol).ok_or_else(|| {
+        // Resolve token symbol using TokenRegistry
+        let token_entry =
+            self.token_registry.resolve_symbol(&input.token).await.ok_or_else(|| {
                 McpError::invalid_params(
                     format!(
-                        "Unknown token symbol: '{}'. Supported symbols: WETH, ETH, USDC, USDT, DAI, WBTC, LINK, UNI",
-                        symbol
+                        "Unknown token symbol: '{}'. Token not found in Uniswap Token List.",
+                        input.token
                     ),
                     None,
                 )
-            })?
-        } else {
-            return Err(McpError::invalid_params(
-                "Either token_address or token_symbol must be provided",
-                None,
-            ));
-        };
+            })?;
 
         let quote_currency = input
             .quote_currency
@@ -178,7 +174,7 @@ impl EthereumTradingServer {
 
         let result = self
             .price_service
-            .get_price(token_address, quote_currency)
+            .get_price(token_entry.address, quote_currency)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -192,7 +188,9 @@ impl EthereumTradingServer {
     /// The transaction is NOT executed on-chain.
     ///
     /// Returns estimated output amount, gas costs, price impact, and the raw transaction data.
-    #[tool(description = "Simulate a token swap on Uniswap V2/V3 without executing on-chain")]
+    #[tool(
+        description = "Simulate a token swap on Uniswap V2/V3 without executing on-chain. Supports any token from Uniswap Token List."
+    )]
     pub async fn swap_tokens(
         &self,
         Parameters(input): Parameters<SwapTokensInput>,
@@ -205,17 +203,31 @@ impl EthereumTradingServer {
             "swap_tokens called"
         );
 
-        let from_token = parse_address(&input.from_token)?;
-        let to_token = parse_address(&input.to_token)?;
+        // Resolve token symbols using TokenRegistry
+        let from_entry =
+            self.token_registry.resolve_symbol(&input.from_token).await.ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Unknown from_token symbol: '{}'. Token not found in Uniswap Token List.",
+                        input.from_token
+                    ),
+                    None,
+                )
+            })?;
 
-        // Get token decimals to parse amount
-        let from_metadata = self
-            .balance_service
-            .get_token_metadata(from_token)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let to_entry =
+            self.token_registry.resolve_symbol(&input.to_token).await.ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Unknown to_token symbol: '{}'. Token not found in Uniswap Token List.",
+                        input.to_token
+                    ),
+                    None,
+                )
+            })?;
 
-        let amount_in = parse_units(&input.amount, from_metadata.decimals)
+        // Use decimals from TokenRegistry
+        let amount_in = parse_units(&input.amount, from_entry.decimals)
             .map_err(|e| McpError::invalid_params(e, None))?;
 
         let slippage_tolerance = input
@@ -223,8 +235,13 @@ impl EthereumTradingServer {
             .map(|s| Decimal::try_from(s).unwrap_or(Decimal::new(5, 1)))
             .unwrap_or(Decimal::new(5, 1)); // Default 0.5%
 
-        let params =
-            SwapParams { from_token, to_token, amount_in, slippage_tolerance, deadline: None };
+        let params = SwapParams {
+            from_token: from_entry.address,
+            to_token: to_entry.address,
+            amount_in,
+            slippage_tolerance,
+            deadline: None,
+        };
 
         let result = self
             .swap_service

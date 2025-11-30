@@ -54,6 +54,11 @@ pub struct TransactionData {
 /// Result of a swap simulation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwapSimulationResult {
+    /// Whether the simulation was successful (transaction would execute).
+    pub simulation_success: bool,
+    /// Error message if simulation failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub simulation_error: Option<String>,
     /// Input amount (human-readable).
     pub amount_in: String,
     /// Expected output amount (human-readable).

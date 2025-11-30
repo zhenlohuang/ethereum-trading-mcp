@@ -314,6 +314,8 @@ pub struct SwapParams {
 }
 
 pub struct SwapSimulationResult {
+    pub simulation_success: bool,      // Whether eth_call succeeded
+    pub simulation_error: Option<String>, // Error message if failed
     pub amount_in: String,
     pub amount_out_expected: String,
     pub amount_out_minimum: String,  // After slippage
@@ -713,11 +715,16 @@ Get current token price in USD or ETH.
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `token_address` | string | Conditional | Token contract address (0x...). Takes priority if both are provided. |
-| `token_symbol` | string | Conditional | Token symbol (e.g., "WETH", "USDC"). Used if `token_address` is not provided. |
+| `token` | string | Yes | Token symbol (e.g., "WETH", "USDC", "UNI") |
 | `quote_currency` | string | No | "USD" or "ETH" (default: "USD") |
 
-> **Note:** At least one of `token_address` or `token_symbol` must be provided. If both are provided, `token_address` takes priority.
+**Request:**
+```json
+{
+  "token": "WETH",
+  "quote_currency": "USD"
+}
+```
 
 **Response:**
 ```json
@@ -741,14 +748,26 @@ Simulate a token swap on Uniswap.
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `from_token` | string | Yes | Input token address |
-| `to_token` | string | Yes | Output token address |
+| `from_token` | string | Yes | Input token symbol (e.g., "WETH", "USDC") |
+| `to_token` | string | Yes | Output token symbol (e.g., "WETH", "USDC") |
 | `amount` | string | Yes | Amount to swap (human-readable) |
 | `slippage_tolerance` | number | No | Slippage % (default: 0.5) |
+
+**Request:**
+```json
+{
+  "from_token": "WETH",
+  "to_token": "USDC",
+  "amount": "1.0",
+  "slippage_tolerance": 0.5
+}
+```
 
 **Response:**
 ```json
 {
+  "simulation_success": true,
+  "simulation_error": null,
   "amount_in": "1.0",
   "amount_out_expected": "2500.123456",
   "amount_out_minimum": "2487.622789",
@@ -768,6 +787,8 @@ Simulate a token swap on Uniswap.
   }
 }
 ```
+
+> **Note:** The `simulation_success` field indicates whether the transaction would execute successfully on-chain. If `false`, check `simulation_error` for the reason (e.g., insufficient balance, token not approved, slippage exceeded).
 
 ## 14. MCP Protocol Integration
 
@@ -812,39 +833,36 @@ When a client requests the tool list via `tools/list`, the server responds with:
     },
     {
       "name": "get_token_price",
-      "description": "Get current token price in USD or ETH",
+      "description": "Get current token price in USD or ETH from on-chain sources",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "token_address": {
+          "token": {
             "type": "string",
-            "description": "Token contract address (0x...). Required if token_symbol is not provided."
-          },
-          "token_symbol": {
-            "type": "string",
-            "description": "Token symbol (e.g., WETH, USDC). Required if token_address is not provided."
+            "description": "Token symbol (e.g., WETH, USDC, UNI)"
           },
           "quote_currency": {
             "type": "string",
             "enum": ["USD", "ETH"],
-            "description": "Quote currency for price"
+            "description": "Quote currency for price (default: USD)"
           }
-        }
+        },
+        "required": ["token"]
       }
     },
     {
       "name": "swap_tokens",
-      "description": "Simulate a token swap on Uniswap V2/V3",
+      "description": "Simulate a token swap on Uniswap V2/V3 without executing on-chain",
       "inputSchema": {
         "type": "object",
         "properties": {
           "from_token": {
             "type": "string",
-            "description": "Input token address"
+            "description": "Input token symbol (e.g., WETH, USDC)"
           },
           "to_token": {
             "type": "string",
-            "description": "Output token address"
+            "description": "Output token symbol (e.g., WETH, USDC)"
           },
           "amount": {
             "type": "string",

@@ -78,7 +78,19 @@ impl SwapService {
         let amount_out_min_u128: u128 = amount_out_min.trunc().to_string().parse().unwrap_or(0);
         let amount_out_min_u256 = U256::from(amount_out_min_u128);
 
-        // Estimate gas
+        // Simulate the transaction using eth_call to verify it would execute
+        let (simulation_success, simulation_error) = match self.simulate_transaction(&tx).await {
+            Ok(()) => {
+                tracing::info!("Swap simulation successful - transaction would execute");
+                (true, None)
+            }
+            Err(error_msg) => {
+                tracing::warn!(error = %error_msg, "Swap simulation failed - transaction would revert");
+                (false, Some(error_msg))
+            }
+        };
+
+        // Estimate gas (may fail if simulation failed, use default in that case)
         let gas_estimate = self.estimate_gas(&tx).await.unwrap_or(200_000);
         let gas_price = self.client.get_gas_price().await.unwrap_or(30_000_000_000);
 
@@ -107,6 +119,8 @@ impl SwapService {
         };
 
         Ok(SwapSimulationResult {
+            simulation_success,
+            simulation_error,
             amount_in: amount_in_formatted,
             amount_out_expected: amount_out_formatted,
             amount_out_minimum: amount_out_min_formatted,
@@ -330,6 +344,42 @@ impl SwapService {
     /// Estimate gas for a transaction.
     async fn estimate_gas(&self, tx: &TransactionRequest) -> Result<u64> {
         self.client.estimate_gas(tx).await
+    }
+
+    /// Simulate a transaction using eth_call to verify it would execute successfully.
+    ///
+    /// Returns Ok(()) if the simulation succeeds, or an error message if it fails.
+    async fn simulate_transaction(
+        &self,
+        tx: &TransactionRequest,
+    ) -> std::result::Result<(), String> {
+        match self.client.call(tx).await {
+            Ok(_) => {
+                tracing::debug!("Transaction simulation successful");
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                tracing::warn!(error = %error_msg, "Transaction simulation failed");
+
+                // Parse common revert reasons for better error messages
+                let user_friendly_error = if error_msg.contains("insufficient") {
+                    "Insufficient token balance or allowance".to_string()
+                } else if error_msg.contains("INSUFFICIENT_OUTPUT_AMOUNT") {
+                    "Output amount is less than minimum (slippage exceeded)".to_string()
+                } else if error_msg.contains("EXPIRED") {
+                    "Transaction deadline expired".to_string()
+                } else if error_msg.contains("TRANSFER_FROM_FAILED") {
+                    "Token transfer failed - check token approval".to_string()
+                } else if error_msg.contains("execution reverted") {
+                    format!("Transaction would revert: {}", error_msg)
+                } else {
+                    format!("Simulation failed: {}", error_msg)
+                };
+
+                Err(user_friendly_error)
+            }
+        }
     }
 
     /// Calculate approximate price impact.
