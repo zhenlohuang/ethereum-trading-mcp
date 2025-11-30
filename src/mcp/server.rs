@@ -72,7 +72,8 @@ pub struct GetTokenPriceInput {
     /// Token contract address (0x...). Required if `token_symbol` is not provided.
     #[serde(default)]
     pub token_address: Option<String>,
-    /// Token symbol (e.g., "WETH", "USDC"). Required if `token_address` is not provided.
+    /// Token symbol. Only supports: WETH, ETH, USDC, USDT, DAI, WBTC, LINK, UNI.
+    /// Required if `token_address` is not provided.
     #[serde(default)]
     pub token_symbol: Option<String>,
     /// Quote currency: "USD" or "ETH". Defaults to "USD".
@@ -134,7 +135,9 @@ impl EthereumTradingServer {
     ///
     /// Fetches prices from on-chain sources (Chainlink oracles or Uniswap pools).
     /// Provide either `token_address` or `token_symbol` (not both).
-    #[tool(description = "Get current token price in USD or ETH from on-chain sources")]
+    #[tool(
+        description = "Get current token price in USD or ETH from on-chain sources. When using token_symbol, only supports: WETH, ETH, USDC, USDT, DAI, WBTC, LINK, UNI. For other tokens, use token_address instead."
+    )]
     pub async fn get_token_price(
         &self,
         Parameters(input): Parameters<GetTokenPriceInput>,
