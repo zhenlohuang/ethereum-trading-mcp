@@ -314,6 +314,8 @@ pub struct SwapParams {
 }
 
 pub struct SwapSimulationResult {
+    pub simulation_success: bool,      // Whether eth_call succeeded
+    pub simulation_error: Option<String>, // Error message if failed
     pub amount_in: String,
     pub amount_out_expected: String,
     pub amount_out_minimum: String,  // After slippage
@@ -749,6 +751,8 @@ Simulate a token swap on Uniswap.
 **Response:**
 ```json
 {
+  "simulation_success": true,
+  "simulation_error": null,
   "amount_in": "1.0",
   "amount_out_expected": "2500.123456",
   "amount_out_minimum": "2487.622789",
@@ -768,6 +772,8 @@ Simulate a token swap on Uniswap.
   }
 }
 ```
+
+> **Note:** The `simulation_success` field indicates whether the transaction would execute successfully on-chain. If `false`, check `simulation_error` for the reason (e.g., insufficient balance, token not approved, slippage exceeded).
 
 ## 14. MCP Protocol Integration
 
