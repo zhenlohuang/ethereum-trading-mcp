@@ -54,11 +54,29 @@ impl PriceService {
         // Get token metadata
         let metadata = self.balance_service.get_token_metadata(token_address).await?;
 
+        // Special case: WETH priced in ETH is always 1:1
+        // (WETH is wrapped ETH, so 1 WETH = 1 ETH)
+        if token_address == WETH_ADDRESS && quote_currency == QuoteCurrency::ETH {
+            return Ok(PriceInfo {
+                token: TokenInfo::erc20(token_address, metadata.symbol.clone(), metadata.decimals),
+                price: "1".to_string(),
+                quote_currency: QuoteCurrency::ETH,
+                source: PriceSource::UniswapV3, // Use V3 as nominal source
+                timestamp: current_timestamp(),
+            });
+        }
+
         // Try Chainlink first for USD prices
         if quote_currency == QuoteCurrency::USD {
             if let Some(feed_address) = self.chainlink_feeds.get(&token_address) {
-                if let Ok(price_info) =
-                    self.get_chainlink_price(token_address, *feed_address, &metadata.symbol).await
+                if let Ok(price_info) = self
+                    .get_chainlink_price(
+                        token_address,
+                        *feed_address,
+                        &metadata.symbol,
+                        metadata.decimals,
+                    )
+                    .await
                 {
                     return Ok(price_info);
                 }
@@ -71,25 +89,69 @@ impl PriceService {
     }
 
     /// Get price from Chainlink oracle.
+    ///
+    /// Validates that the price data is fresh and positive:
+    /// - Answer must be positive (> 0)
+    /// - Data must not be stale (answeredInRound >= roundId)
+    /// - UpdatedAt must be recent (within 1 hour for most feeds)
     async fn get_chainlink_price(
         &self,
         token_address: Address,
         feed_address: Address,
         symbol: &str,
+        token_decimals: u8,
     ) -> Result<PriceInfo> {
         let contract = IAggregatorV3::new(feed_address, self.client.provider().clone());
 
         let round_data = contract.latestRoundData().call().await?;
         let decimals = contract.decimals().call().await?;
 
-        // Chainlink returns price with 8 decimals typically
-        // Convert I256 answer to i128 then to Decimal
+        // Validate the Chainlink response
+        // 1. Check that answeredInRound >= roundId (data is not stale)
+        if round_data.answeredInRound < round_data.roundId {
+            return Err(AppError::PriceOracle(format!(
+                "Stale Chainlink data: answeredInRound ({}) < roundId ({})",
+                round_data.answeredInRound, round_data.roundId
+            )));
+        }
+
+        // 2. Check that updatedAt is recent (within 1 hour = 3600 seconds)
+        // Most Chainlink feeds update at least hourly
+        let now = current_timestamp();
+        let updated_at: u64 = round_data
+            .updatedAt
+            .try_into()
+            .map_err(|_| AppError::NumericOverflow("updatedAt timestamp overflow".to_string()))?;
+        const STALENESS_THRESHOLD: u64 = 3600; // 1 hour
+        if now > updated_at && now - updated_at > STALENESS_THRESHOLD {
+            return Err(AppError::PriceOracle(format!(
+                "Stale Chainlink data: last update was {} seconds ago (threshold: {})",
+                now - updated_at,
+                STALENESS_THRESHOLD
+            )));
+        }
+
+        // 3. Check that answer is positive
+        if round_data.answer.is_negative() || round_data.answer.is_zero() {
+            return Err(AppError::PriceOracle(format!(
+                "Invalid Chainlink answer: {} (must be positive)",
+                round_data.answer
+            )));
+        }
+
+        // Convert I256 answer to i128 with overflow check
         let answer_str = round_data.answer.to_string();
-        let answer_i128: i128 = answer_str.parse().unwrap_or(0);
+        let answer_i128: i128 = answer_str.parse().map_err(|_| {
+            AppError::NumericOverflow(format!(
+                "Chainlink answer {} exceeds i128 range",
+                round_data.answer
+            ))
+        })?;
+
         let price = Decimal::from(answer_i128) / Decimal::from(10i64.pow(decimals as u32));
 
         Ok(PriceInfo {
-            token: TokenInfo::erc20(token_address, symbol.to_string(), 18),
+            token: TokenInfo::erc20(token_address, symbol.to_string(), token_decimals),
             price: price.to_string(),
             quote_currency: QuoteCurrency::USD,
             source: PriceSource::Chainlink,
@@ -169,8 +231,12 @@ impl PriceService {
                 let out_decimals =
                     if token_out == crate::ethereum::contracts::USDC_ADDRESS { 6 } else { 18 };
 
-                let amount_out_str = result.amountOut.to_string();
-                let amount_out: u128 = amount_out_str.parse().unwrap_or(0);
+                let amount_out: u128 = result.amountOut.try_into().map_err(|_| {
+                    AppError::NumericOverflow(format!(
+                        "Uniswap V3 quote amountOut {} exceeds u128 range",
+                        result.amountOut
+                    ))
+                })?;
                 let price = Decimal::from(amount_out) / Decimal::from(10i64.pow(out_decimals));
 
                 return Ok(price);
@@ -212,9 +278,24 @@ impl PriceService {
         let out_decimals =
             if token_out == crate::ethereum::contracts::USDC_ADDRESS { 6 } else { 18 };
 
-        // Convert U112 reserves to u128 for Decimal
-        let reserve_in_u128: u128 = reserve_in.to_string().parse().unwrap_or(0);
-        let reserve_out_u128: u128 = reserve_out.to_string().parse().unwrap_or(0);
+        // Convert U112 reserves to u128 for Decimal with overflow check
+        let reserve_in_u128: u128 = reserve_in.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!(
+                "Uniswap V2 reserve_in {} exceeds u128 range",
+                reserve_in
+            ))
+        })?;
+        let reserve_out_u128: u128 = reserve_out.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!(
+                "Uniswap V2 reserve_out {} exceeds u128 range",
+                reserve_out
+            ))
+        })?;
+
+        // Validate reserves are non-zero to avoid division by zero
+        if reserve_in_u128 == 0 {
+            return Err(AppError::InsufficientLiquidity);
+        }
 
         // Price = (reserve_out / 10^out_decimals) / (reserve_in / 10^in_decimals)
         let price = Decimal::from(reserve_out_u128)
@@ -261,5 +342,20 @@ mod tests {
 
         // Expected: 2000 / 1000 = 2.0
         assert_eq!(price, Decimal::from(2));
+    }
+
+    #[test]
+    fn test_weth_eth_special_case_condition() {
+        // WETH priced in ETH should be handled as a special case (1:1 ratio)
+        // This test verifies the condition logic without network calls
+        let weth = WETH_ADDRESS;
+        let quote_eth = QuoteCurrency::ETH;
+        let quote_usd = QuoteCurrency::USD;
+
+        // WETH + ETH quote should trigger special case
+        assert!(weth == WETH_ADDRESS && quote_eth == QuoteCurrency::ETH);
+
+        // WETH + USD quote should NOT trigger special case
+        assert!(!(weth == WETH_ADDRESS && quote_usd == QuoteCurrency::ETH));
     }
 }

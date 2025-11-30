@@ -53,6 +53,14 @@ pub enum AppError {
     #[error("Parse error: {0}")]
     Parse(String),
 
+    /// Price oracle failure (e.g., stale or invalid data).
+    #[error("Price oracle error: {0}")]
+    PriceOracle(String),
+
+    /// Numeric overflow during conversion.
+    #[error("Numeric overflow: {0}")]
+    NumericOverflow(String),
+
     /// Pending transaction error.
     #[error("Pending transaction error: {0}")]
     PendingTransaction(String),
@@ -91,9 +99,10 @@ impl From<std::num::ParseIntError> for AppError {
 impl From<AppError> for McpError {
     fn from(err: AppError) -> Self {
         match err {
-            AppError::InvalidAddress(_) | AppError::TokenNotFound(_) | AppError::Parse(_) => {
-                McpError::invalid_params(err.to_string(), None)
-            }
+            AppError::InvalidAddress(_)
+            | AppError::TokenNotFound(_)
+            | AppError::Parse(_)
+            | AppError::NumericOverflow(_) => McpError::invalid_params(err.to_string(), None),
             AppError::Config(_) => McpError::invalid_request(err.to_string(), None),
             _ => McpError::internal_error(err.to_string(), None),
         }

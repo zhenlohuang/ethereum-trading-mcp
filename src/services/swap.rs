@@ -79,10 +79,11 @@ impl SwapService {
 
         // Calculate minimum output with slippage
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
-        let amount_out_str = amount_out.to_string();
-        let amount_out_u128: u128 = amount_out_str.parse().unwrap_or(0);
+        let amount_out_u128: u128 = amount_out.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!("amount_out {} exceeds u128 range", amount_out))
+        })?;
         let amount_out_min = Decimal::from(amount_out_u128) * slippage_multiplier;
-        let amount_out_min_u128: u128 = amount_out_min.trunc().to_string().parse().unwrap_or(0);
+        let amount_out_min_u128: u128 = Self::decimal_to_u128(amount_out_min)?;
         let amount_out_min_u256 = U256::from(amount_out_min_u128);
 
         // Simulate the transaction using eth_call to verify it would execute
@@ -191,9 +192,14 @@ impl SwapService {
 
         // Calculate minimum amount out with slippage
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
-        let best_amount_out_u128: u128 = best_amount_out.to_string().parse().unwrap_or(0);
+        let best_amount_out_u128: u128 = best_amount_out.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!(
+                "best_amount_out {} exceeds u128 range",
+                best_amount_out
+            ))
+        })?;
         let min_out = Decimal::from(best_amount_out_u128) * slippage_multiplier;
-        let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
+        let min_out_u128: u128 = Self::decimal_to_u128(min_out)?;
         let amount_out_min = U256::from(min_out_u128);
 
         // Build swap params with fee converted to U24
@@ -264,9 +270,11 @@ impl SwapService {
 
         // Calculate minimum amount out with slippage
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
-        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
+        let amount_out_u128: u128 = amount_out.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!("amount_out {} exceeds u128 range", amount_out))
+        })?;
         let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
-        let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
+        let min_out_u128: u128 = Self::decimal_to_u128(min_out)?;
         let amount_out_min = U256::from(min_out_u128);
 
         let calldata = IUniswapV2Router02::swapExactTokensForTokensCall {
@@ -312,9 +320,14 @@ impl SwapService {
         let deadline = params.deadline.unwrap_or_else(|| current_timestamp() + 1200);
 
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
-        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
+        let amount_out_u128: u128 = amount_out.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!(
+                "multihop amount_out {} exceeds u128 range",
+                amount_out
+            ))
+        })?;
         let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
-        let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
+        let min_out_u128: u128 = Self::decimal_to_u128(min_out)?;
         let amount_out_min = U256::from(min_out_u128);
 
         let calldata = IUniswapV2Router02::swapExactTokensForTokensCall {
@@ -409,10 +422,24 @@ impl SwapService {
         // Price impact = (1 - execution_rate / spot_rate) * 100
         //              = (1 - (amount_out * reference_amount) / (spot_output * amount_in)) * 100
 
-        let amount_in_u128: u128 = params.amount_in.to_string().parse().unwrap_or(1);
-        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
-        let reference_u128: u128 = reference_amount.to_string().parse().unwrap_or(1);
-        let spot_output_u128: u128 = spot_output.to_string().parse().unwrap_or(1);
+        // Convert U256 values to u128 with overflow checking
+        // For price impact calculation, overflow indicates extremely large values
+        // which would likely result in very high price impact anyway
+        let amount_in_u128: u128 = params.amount_in.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!("amount_in {} exceeds u128 range", params.amount_in))
+        })?;
+        let amount_out_u128: u128 = amount_out.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!("amount_out {} exceeds u128 range", amount_out))
+        })?;
+        let reference_u128: u128 = reference_amount.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!(
+                "reference_amount {} exceeds u128 range",
+                reference_amount
+            ))
+        })?;
+        let spot_output_u128: u128 = spot_output.try_into().map_err(|_| {
+            AppError::NumericOverflow(format!("spot_output {} exceeds u128 range", spot_output))
+        })?;
 
         // Avoid division by zero
         if spot_output_u128 == 0 || amount_in_u128 == 0 {
@@ -461,6 +488,17 @@ impl SwapService {
         } else {
             reference
         }
+    }
+
+    /// Convert a Decimal to u128 with overflow checking.
+    /// Truncates to integer and validates it fits in u128.
+    fn decimal_to_u128(value: Decimal) -> Result<u128> {
+        let truncated = value.trunc();
+        // Decimal's to_string for truncated value should be a valid integer
+        truncated
+            .to_string()
+            .parse::<u128>()
+            .map_err(|_| AppError::NumericOverflow(format!("Decimal {} exceeds u128 range", value)))
     }
 
     /// Get a V3 quote for a given amount.
