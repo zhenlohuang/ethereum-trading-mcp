@@ -599,4 +599,251 @@ mod tests {
         assert_eq!(route.path.len(), 2);
         assert_eq!(route.fee_tier, Some(3000));
     }
+
+    // ============================================================================
+    // current_timestamp Tests
+    // ============================================================================
+
+    #[test]
+    fn test_current_timestamp_is_reasonable() {
+        let ts = current_timestamp();
+        // Should be after Jan 1, 2024 (1704067200)
+        assert!(ts > 1704067200, "Timestamp should be after 2024");
+        // Should be before year 2100 (4102444800)
+        assert!(ts < 4102444800, "Timestamp should be before 2100");
+    }
+
+    #[test]
+    fn test_current_timestamp_increases() {
+        let ts1 = current_timestamp();
+        // Small delay to ensure time passes
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let ts2 = current_timestamp();
+        // ts2 should be >= ts1 (might be equal if within same second)
+        assert!(ts2 >= ts1);
+    }
+
+    // ============================================================================
+    // calculate_reference_amount Tests
+    // ============================================================================
+
+    #[test]
+    fn test_calculate_reference_amount_normal() {
+        // 1000 tokens -> 0.1% = 1 token reference
+        let amount = U256::from(1_000_000_000_000_000_000_000u128); // 1000 * 10^18
+        let reference = SwapService::calculate_reference_amount(amount);
+
+        // Should be 0.1% = 1 token worth
+        let expected = amount / U256::from(1000);
+        assert_eq!(reference, expected);
+    }
+
+    #[test]
+    fn test_calculate_reference_amount_minimum() {
+        // Very small amount should use minimum (1000)
+        let amount = U256::from(100u64);
+        let reference = SwapService::calculate_reference_amount(amount);
+
+        // Should be capped at amount itself (since 100 < 1000)
+        assert_eq!(reference, amount);
+    }
+
+    #[test]
+    fn test_calculate_reference_amount_large() {
+        // Very large amount - 10% cap
+        let amount = U256::from(1_000_000_000_000_000_000_000_000u128); // 1M tokens
+        let reference = SwapService::calculate_reference_amount(amount);
+
+        // 0.1% of 1M = 1000, which should be between min and max
+        let expected = amount / U256::from(1000);
+        let max_reference = amount / U256::from(10);
+
+        assert!(reference <= max_reference);
+        assert_eq!(reference, expected);
+    }
+
+    #[test]
+    fn test_calculate_reference_amount_boundary() {
+        // Test at boundary where 0.1% equals minimum
+        let min_reference = U256::from(1_000u64);
+        let amount = min_reference * U256::from(1000); // 1,000,000
+
+        let reference = SwapService::calculate_reference_amount(amount);
+        assert_eq!(reference, min_reference);
+    }
+
+    // ============================================================================
+    // decimal_to_u128 Tests
+    // ============================================================================
+
+    #[test]
+    fn test_decimal_to_u128_whole_number() {
+        let value = Decimal::from(1000);
+        let result = SwapService::decimal_to_u128(value).unwrap();
+        assert_eq!(result, 1000u128);
+    }
+
+    #[test]
+    fn test_decimal_to_u128_truncates_decimals() {
+        let value = Decimal::new(12345, 2); // 123.45
+        let result = SwapService::decimal_to_u128(value).unwrap();
+        assert_eq!(result, 123u128); // Truncated
+    }
+
+    #[test]
+    fn test_decimal_to_u128_zero() {
+        let value = Decimal::ZERO;
+        let result = SwapService::decimal_to_u128(value).unwrap();
+        assert_eq!(result, 0u128);
+    }
+
+    #[test]
+    fn test_decimal_to_u128_max_valid() {
+        // Large but valid u128 value
+        let value = Decimal::from(u64::MAX);
+        let result = SwapService::decimal_to_u128(value).unwrap();
+        assert_eq!(result, u64::MAX as u128);
+    }
+
+    // ============================================================================
+    // Slippage Calculation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_slippage_1_percent() {
+        let amount_out = U256::from(1_000_000_000u64); // 1B units
+        let slippage = Decimal::from(1); // 1%
+
+        let slippage_multiplier = Decimal::ONE - slippage / Decimal::from(100);
+        let amount_out_u128: u128 = amount_out.try_into().unwrap();
+        let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
+
+        // 1% slippage = 99% of original
+        let expected = Decimal::from(990_000_000u64);
+        assert_eq!(min_out, expected);
+    }
+
+    #[test]
+    fn test_slippage_5_percent() {
+        let amount_out = U256::from(100_000_000u64);
+        let slippage = Decimal::from(5); // 5%
+
+        let slippage_multiplier = Decimal::ONE - slippage / Decimal::from(100);
+        let amount_out_u128: u128 = amount_out.try_into().unwrap();
+        let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
+
+        // 5% slippage = 95% of original
+        let expected = Decimal::from(95_000_000u64);
+        assert_eq!(min_out, expected);
+    }
+
+    #[test]
+    fn test_slippage_small() {
+        let amount_out = U256::from(1_000_000u64);
+        let slippage = Decimal::new(1, 1); // 0.1%
+
+        let slippage_multiplier = Decimal::ONE - slippage / Decimal::from(100);
+        let amount_out_u128: u128 = amount_out.try_into().unwrap();
+        let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
+
+        // 0.1% slippage = 99.9% of original
+        let expected = Decimal::from(999_000u64);
+        assert_eq!(min_out, expected);
+    }
+
+    // ============================================================================
+    // Gas Cost Calculation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_gas_cost_high_gas_price() {
+        let gas_estimate: u64 = 200_000;
+        let gas_price: u128 = 100_000_000_000; // 100 gwei
+
+        let gas_cost_wei = U256::from(gas_estimate) * U256::from(gas_price);
+        let gas_cost_eth = format_units(gas_cost_wei, 18);
+
+        // 200,000 * 100 gwei = 20,000,000 gwei = 0.02 ETH
+        assert_eq!(gas_cost_eth, "0.02");
+    }
+
+    #[test]
+    fn test_gas_cost_low_gas_price() {
+        let gas_estimate: u64 = 100_000;
+        let gas_price: u128 = 5_000_000_000; // 5 gwei
+
+        let gas_cost_wei = U256::from(gas_estimate) * U256::from(gas_price);
+        let gas_cost_eth = format_units(gas_cost_wei, 18);
+
+        // 100,000 * 5 gwei = 500,000 gwei = 0.0005 ETH
+        assert_eq!(gas_cost_eth, "0.0005");
+    }
+
+    // ============================================================================
+    // SwapRoute Tests
+    // ============================================================================
+
+    #[test]
+    fn test_swap_route_v2_direct() {
+        let route = SwapRoute {
+            protocol: UniswapVersion::V2,
+            path: vec!["WETH".to_string(), "USDC".to_string()],
+            fee_tier: None,
+        };
+
+        assert_eq!(route.protocol, UniswapVersion::V2);
+        assert_eq!(route.path.len(), 2);
+        assert!(route.fee_tier.is_none());
+    }
+
+    #[test]
+    fn test_swap_route_v2_multihop() {
+        let route = SwapRoute {
+            protocol: UniswapVersion::V2,
+            path: vec!["TOKEN".to_string(), "WETH".to_string(), "USDC".to_string()],
+            fee_tier: None,
+        };
+
+        assert_eq!(route.path.len(), 3);
+    }
+
+    #[test]
+    fn test_swap_route_v3_fee_tiers() {
+        // Test all common V3 fee tiers
+        for fee in [100, 500, 3000, 10000] {
+            let route = SwapRoute {
+                protocol: UniswapVersion::V3,
+                path: vec!["A".to_string(), "B".to_string()],
+                fee_tier: Some(fee),
+            };
+            assert_eq!(route.fee_tier, Some(fee));
+        }
+    }
+
+    // ============================================================================
+    // Deadline Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deadline_20_minutes() {
+        let now = current_timestamp();
+        let deadline = now + 1200; // 20 minutes
+
+        assert_eq!(deadline - now, 1200);
+        assert!(deadline > now);
+    }
+
+    #[test]
+    fn test_deadline_custom() {
+        let custom_deadline = 1800000000u64;
+        let params = SwapParams {
+            from_token: Address::ZERO,
+            to_token: Address::ZERO,
+            amount_in: U256::ZERO,
+            slippage_tolerance: Decimal::ONE,
+            deadline: Some(custom_deadline),
+        };
+
+        assert_eq!(params.deadline, Some(custom_deadline));
+    }
 }

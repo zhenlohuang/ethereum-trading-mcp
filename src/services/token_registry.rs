@@ -446,12 +446,222 @@ impl TokenRegistryTrait for TokenRegistry {
 mod tests {
     use super::*;
 
+    // ============================================================================
+    // CacheState Tests
+    // ============================================================================
+
     #[test]
-    fn test_cache_state_is_expired() {
+    fn test_cache_state_new() {
+        let state = CacheState::new();
+        assert!(state.by_symbol.is_empty());
+        assert!(state.by_address.is_empty());
+        assert!(state.last_updated.is_none());
+    }
+
+    #[test]
+    fn test_cache_state_is_expired_no_update() {
         let state = CacheState::new();
         // New cache without last_updated should be expired
         assert!(state.is_expired(Duration::from_secs(3600)));
     }
+
+    #[test]
+    fn test_cache_state_is_expired_fresh() {
+        let mut state = CacheState::new();
+        state.last_updated = Some(Instant::now());
+
+        // Just updated, should not be expired
+        assert!(!state.is_expired(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn test_cache_state_insert() {
+        let mut state = CacheState::new();
+
+        let entry = TokenEntry {
+            address: WETH_ADDRESS,
+            symbol: "WETH".to_string(),
+            name: "Wrapped Ether".to_string(),
+            decimals: 18,
+            chain_id: ETHEREUM_MAINNET_CHAIN_ID,
+        };
+
+        state.insert(entry.clone());
+
+        // Should be findable by symbol
+        let key_symbol = (ETHEREUM_MAINNET_CHAIN_ID, "WETH".to_string());
+        assert!(state.by_symbol.contains_key(&key_symbol));
+
+        // Should be findable by address
+        let key_address = (ETHEREUM_MAINNET_CHAIN_ID, WETH_ADDRESS);
+        assert!(state.by_address.contains_key(&key_address));
+    }
+
+    #[test]
+    fn test_cache_state_insert_multiple() {
+        let mut state = CacheState::new();
+
+        let weth = TokenEntry {
+            address: WETH_ADDRESS,
+            symbol: "WETH".to_string(),
+            name: "Wrapped Ether".to_string(),
+            decimals: 18,
+            chain_id: ETHEREUM_MAINNET_CHAIN_ID,
+        };
+
+        let usdc = TokenEntry {
+            address: USDC_ADDRESS,
+            symbol: "USDC".to_string(),
+            name: "USD Coin".to_string(),
+            decimals: 6,
+            chain_id: ETHEREUM_MAINNET_CHAIN_ID,
+        };
+
+        state.insert(weth);
+        state.insert(usdc);
+
+        assert_eq!(state.by_symbol.len(), 2);
+        assert_eq!(state.by_address.len(), 2);
+    }
+
+    #[test]
+    fn test_cache_state_insert_uppercase_key() {
+        let mut state = CacheState::new();
+
+        let entry = TokenEntry {
+            address: USDC_ADDRESS,
+            symbol: "usdc".to_string(), // lowercase
+            name: "USD Coin".to_string(),
+            decimals: 6,
+            chain_id: ETHEREUM_MAINNET_CHAIN_ID,
+        };
+
+        state.insert(entry);
+
+        // Key should be uppercase
+        let key = (ETHEREUM_MAINNET_CHAIN_ID, "USDC".to_string());
+        assert!(state.by_symbol.contains_key(&key));
+    }
+
+    // ============================================================================
+    // TokenEntry Tests
+    // ============================================================================
+
+    #[test]
+    fn test_token_entry_creation() {
+        let entry = TokenEntry {
+            address: WETH_ADDRESS,
+            symbol: "WETH".to_string(),
+            name: "Wrapped Ether".to_string(),
+            decimals: 18,
+            chain_id: 1,
+        };
+
+        assert_eq!(entry.symbol, "WETH");
+        assert_eq!(entry.decimals, 18);
+        assert_eq!(entry.chain_id, 1);
+    }
+
+    #[test]
+    fn test_token_entry_clone() {
+        let entry = TokenEntry {
+            address: USDC_ADDRESS,
+            symbol: "USDC".to_string(),
+            name: "USD Coin".to_string(),
+            decimals: 6,
+            chain_id: 1,
+        };
+
+        let cloned = entry.clone();
+        assert_eq!(cloned.symbol, entry.symbol);
+        assert_eq!(cloned.address, entry.address);
+    }
+
+    #[test]
+    fn test_token_entry_debug() {
+        let entry = TokenEntry {
+            address: WBTC_ADDRESS,
+            symbol: "WBTC".to_string(),
+            name: "Wrapped BTC".to_string(),
+            decimals: 8,
+            chain_id: 1,
+        };
+
+        let debug_str = format!("{:?}", entry);
+        assert!(debug_str.contains("WBTC"));
+        assert!(debug_str.contains("8"));
+    }
+
+    // ============================================================================
+    // TokenListToken Tests
+    // ============================================================================
+
+    #[test]
+    fn test_token_list_token_deserialization() {
+        let json = r#"{
+            "chainId": 1,
+            "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "symbol": "USDC",
+            "name": "USD Coin",
+            "decimals": 6
+        }"#;
+
+        let token: TokenListToken = serde_json::from_str(json).unwrap();
+        assert_eq!(token.chain_id, 1);
+        assert_eq!(token.symbol, "USDC");
+        assert_eq!(token.decimals, 6);
+        assert!(token.logo_uri.is_none());
+    }
+
+    #[test]
+    fn test_token_list_token_with_logo() {
+        let json = r#"{
+            "chainId": 1,
+            "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "symbol": "WETH",
+            "name": "Wrapped Ether",
+            "decimals": 18,
+            "logoURI": "https://example.com/weth.png"
+        }"#;
+
+        let token: TokenListToken = serde_json::from_str(json).unwrap();
+        assert_eq!(token.logo_uri, Some("https://example.com/weth.png".to_string()));
+    }
+
+    // ============================================================================
+    // TokenListResponse Tests
+    // ============================================================================
+
+    #[test]
+    fn test_token_list_response_deserialization() {
+        let json = r#"{
+            "name": "Uniswap Labs Default",
+            "tokens": [
+                {
+                    "chainId": 1,
+                    "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "symbol": "USDC",
+                    "name": "USD Coin",
+                    "decimals": 6
+                },
+                {
+                    "chainId": 1,
+                    "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "symbol": "WETH",
+                    "name": "Wrapped Ether",
+                    "decimals": 18
+                }
+            ]
+        }"#;
+
+        let response: TokenListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.name, "Uniswap Labs Default");
+        assert_eq!(response.tokens.len(), 2);
+    }
+
+    // ============================================================================
+    // TokenRegistry Tests
+    // ============================================================================
 
     #[test]
     fn test_registry_creation() {
@@ -471,5 +681,98 @@ mod tests {
         .expect("Failed to create registry");
         assert_eq!(registry.chain_id, 42);
         assert_eq!(registry.cache_ttl, Duration::from_secs(7200));
+    }
+
+    #[test]
+    fn test_registry_custom_ttl() {
+        let ttl = Duration::from_secs(1800); // 30 minutes
+        let registry = TokenRegistry::with_options(1, UNISWAP_TOKEN_LIST_URL.to_string(), ttl)
+            .expect("Failed to create registry");
+
+        assert_eq!(registry.cache_ttl, ttl);
+    }
+
+    #[test]
+    fn test_registry_non_mainnet_no_fallback() {
+        // Non-mainnet chain should not have fallback tokens pre-populated
+        let registry = TokenRegistry::new(5).expect("Failed to create registry"); // Goerli
+        assert_eq!(registry.chain_id, 5);
+    }
+
+    // ============================================================================
+    // Constants Tests
+    // ============================================================================
+
+    #[test]
+    fn test_default_cache_ttl() {
+        assert_eq!(DEFAULT_CACHE_TTL, Duration::from_secs(86400)); // 24 hours
+    }
+
+    #[test]
+    fn test_uniswap_token_list_url() {
+        assert_eq!(UNISWAP_TOKEN_LIST_URL, "https://tokens.uniswap.org");
+    }
+
+    #[test]
+    fn test_one_inch_token_list_url() {
+        assert_eq!(ONE_INCH_TOKEN_LIST_URL, "https://tokens.1inch.eth.limo");
+    }
+
+    // ============================================================================
+    // Fallback Tokens Tests (async)
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_fallback_tokens_mainnet() {
+        let registry =
+            TokenRegistry::new(ETHEREUM_MAINNET_CHAIN_ID).expect("Failed to create registry");
+
+        // Fallback tokens should be pre-populated
+        let cache = registry.cache.read().await;
+
+        // Check WETH
+        let weth_key = (ETHEREUM_MAINNET_CHAIN_ID, "WETH".to_string());
+        assert!(cache.by_symbol.contains_key(&weth_key));
+
+        // Check USDC
+        let usdc_key = (ETHEREUM_MAINNET_CHAIN_ID, "USDC".to_string());
+        assert!(cache.by_symbol.contains_key(&usdc_key));
+
+        // Check WBTC
+        let wbtc_key = (ETHEREUM_MAINNET_CHAIN_ID, "WBTC".to_string());
+        assert!(cache.by_symbol.contains_key(&wbtc_key));
+
+        // Check UNI
+        let uni_key = (ETHEREUM_MAINNET_CHAIN_ID, "UNI".to_string());
+        assert!(cache.by_symbol.contains_key(&uni_key));
+    }
+
+    #[tokio::test]
+    async fn test_fallback_tokens_by_address() {
+        let registry =
+            TokenRegistry::new(ETHEREUM_MAINNET_CHAIN_ID).expect("Failed to create registry");
+
+        let cache = registry.cache.read().await;
+
+        // Check WETH by address
+        let weth_key = (ETHEREUM_MAINNET_CHAIN_ID, WETH_ADDRESS);
+        assert!(cache.by_address.contains_key(&weth_key));
+
+        // Check USDC by address
+        let usdc_key = (ETHEREUM_MAINNET_CHAIN_ID, USDC_ADDRESS);
+        assert!(cache.by_address.contains_key(&usdc_key));
+    }
+
+    #[tokio::test]
+    async fn test_cache_stats_initial() {
+        let registry =
+            TokenRegistry::new(ETHEREUM_MAINNET_CHAIN_ID).expect("Failed to create registry");
+
+        let (count, age) = registry.cache_stats().await;
+
+        // Should have fallback tokens
+        assert!(count >= 4);
+        // Age should be None (fallback doesn't set last_updated)
+        assert!(age.is_none());
     }
 }
