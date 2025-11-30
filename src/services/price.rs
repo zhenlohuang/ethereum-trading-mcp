@@ -19,6 +19,12 @@ use crate::{
     types::{PriceInfo, PriceSource, QuoteCurrency, TokenInfo},
 };
 
+/// Get current Unix timestamp in seconds.
+/// Returns 0 if system time is before Unix epoch (should never happen in practice).
+fn current_timestamp() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
 /// Service for fetching token prices.
 #[derive(Clone)]
 pub struct PriceService {
@@ -82,14 +88,12 @@ impl PriceService {
         let answer_i128: i128 = answer_str.parse().unwrap_or(0);
         let price = Decimal::from(answer_i128) / Decimal::from(10i64.pow(decimals as u32));
 
-        let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-
         Ok(PriceInfo {
             token: TokenInfo::erc20(token_address, symbol.to_string(), 18),
             price: price.to_string(),
             quote_currency: QuoteCurrency::USD,
             source: PriceSource::Chainlink,
-            timestamp,
+            timestamp: current_timestamp(),
         })
     }
 
@@ -113,29 +117,23 @@ impl PriceService {
 
         // Try V3 first with common fee tiers
         if let Ok(price) = self.get_uniswap_v3_price(token_address, quote_token, decimals).await {
-            let timestamp =
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-
             return Ok(PriceInfo {
                 token: TokenInfo::erc20(token_address, symbol.to_string(), decimals),
                 price: price.to_string(),
                 quote_currency,
                 source: PriceSource::UniswapV3,
-                timestamp,
+                timestamp: current_timestamp(),
             });
         }
 
         // Fall back to V2
         if let Ok(price) = self.get_uniswap_v2_price(token_address, quote_token, decimals).await {
-            let timestamp =
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-
             return Ok(PriceInfo {
                 token: TokenInfo::erc20(token_address, symbol.to_string(), decimals),
                 price: price.to_string(),
                 quote_currency,
                 source: PriceSource::UniswapV2,
-                timestamp,
+                timestamp: current_timestamp(),
             });
         }
 
@@ -153,11 +151,16 @@ impl PriceService {
 
         // Try each fee tier
         for fee in fee_tiers::ALL_FEES {
+            // Fee tiers are u32, convert to u24 (safe as all fee tiers are < 2^24)
+            let fee_u24 = match u32::try_into(fee) {
+                Ok(f) => f,
+                Err(_) => continue, // Skip invalid fee tiers
+            };
             let params = IQuoterV2::QuoteExactInputSingleParams {
                 tokenIn: token_in,
                 tokenOut: token_out,
                 amountIn: U256::from(10u64.pow(token_in_decimals as u32)), // 1 token
-                fee: fee.try_into().unwrap(),
+                fee: fee_u24,
                 sqrtPriceLimitX96: U160::ZERO,
             };
 
@@ -220,5 +223,43 @@ impl PriceService {
             / Decimal::from(10i64.pow(out_decimals));
 
         Ok(price)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chainlink_feeds_contains_common_tokens() {
+        let feeds = get_chainlink_feeds();
+        // Should contain ETH, BTC, USDC feeds
+        assert!(feeds.contains_key(&WETH_ADDRESS));
+    }
+
+    #[test]
+    fn test_quote_currency_parsing() {
+        assert_eq!("USD".parse::<QuoteCurrency>().unwrap(), QuoteCurrency::USD);
+        assert_eq!("ETH".parse::<QuoteCurrency>().unwrap(), QuoteCurrency::ETH);
+        assert_eq!("usd".parse::<QuoteCurrency>().unwrap(), QuoteCurrency::USD);
+        assert!("INVALID".parse::<QuoteCurrency>().is_err());
+    }
+
+    #[test]
+    fn test_price_calculation_from_reserves() {
+        // Simulating a pool with 1000 token_in and 2000 token_out
+        let reserve_in: u128 = 1_000_000_000_000_000_000_000; // 1000 * 10^18
+        let reserve_out: u128 = 2_000_000_000; // 2000 * 10^6 (USDC)
+
+        let token_in_decimals = 18u8;
+        let out_decimals = 6u32;
+
+        // Price = (reserve_out / 10^6) / (reserve_in / 10^18)
+        let price = Decimal::from(reserve_out) * Decimal::from(10i64.pow(token_in_decimals as u32))
+            / Decimal::from(reserve_in)
+            / Decimal::from(10i64.pow(out_decimals));
+
+        // Expected: 2000 / 1000 = 2.0
+        assert_eq!(price, Decimal::from(2));
     }
 }

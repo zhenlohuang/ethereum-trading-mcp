@@ -129,7 +129,10 @@ impl TokenRegistry {
     ///
     /// # Arguments
     /// * `chain_id` - Target chain ID (1 for mainnet, 11155111 for Sepolia, etc.)
-    pub fn new(chain_id: u64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP client cannot be created.
+    pub fn new(chain_id: u64) -> Result<Self> {
         Self::with_options(chain_id, UNISWAP_TOKEN_LIST_URL.to_string(), DEFAULT_CACHE_TTL)
     }
 
@@ -139,19 +142,26 @@ impl TokenRegistry {
     /// * `chain_id` - Target chain ID
     /// * `token_list_url` - URL to fetch token list from
     /// * `cache_ttl` - Cache time-to-live (default: 24 hours)
-    pub fn with_options(chain_id: u64, token_list_url: String, cache_ttl: Duration) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP client cannot be created.
+    pub fn with_options(
+        chain_id: u64,
+        token_list_url: String,
+        cache_ttl: Duration,
+    ) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .map_err(|e| AppError::Transport(format!("Failed to create HTTP client: {}", e)))?;
 
-        Self {
+        Ok(Self {
             client,
             token_list_url,
             chain_id,
             cache_ttl,
             cache: Arc::new(RwLock::new(CacheState::new())),
-        }
+        })
     }
 
     /// Refresh the token cache from remote source.
@@ -341,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_registry_creation() {
-        let registry = TokenRegistry::new(1);
+        let registry = TokenRegistry::new(1).expect("Failed to create registry");
         assert_eq!(registry.chain_id, 1);
         assert_eq!(registry.cache_ttl, DEFAULT_CACHE_TTL);
     }
@@ -352,7 +362,8 @@ mod tests {
             42,
             "https://custom.tokens.api".to_string(),
             Duration::from_secs(7200),
-        );
+        )
+        .expect("Failed to create registry");
         assert_eq!(registry.chain_id, 42);
         assert_eq!(registry.cache_ttl, Duration::from_secs(7200));
     }

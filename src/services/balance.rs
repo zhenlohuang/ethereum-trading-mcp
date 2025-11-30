@@ -95,3 +95,37 @@ impl BalanceService {
         Ok(TokenMetadata { name, symbol, decimals, address: token })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+
+    #[test]
+    fn test_token_info_eth() {
+        let info = TokenInfo::eth();
+        assert_eq!(info.symbol, "ETH");
+        assert_eq!(info.decimals, 18);
+        assert!(info.address.is_none());
+    }
+
+    #[test]
+    fn test_token_info_erc20() {
+        let addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".parse::<Address>().unwrap();
+        let info = TokenInfo::erc20(addr, "USDC".to_string(), 6);
+        assert_eq!(info.symbol, "USDC");
+        assert_eq!(info.decimals, 6);
+        assert!(info.address.is_some());
+    }
+
+    #[test]
+    fn test_balance_info_formatting() {
+        let balance = U256::from(1_000_000_000_000_000_000u64); // 1 ETH
+        let formatted = format_units(balance, 18);
+        assert_eq!(formatted, "1");
+
+        let balance_usdc = U256::from(1_500_000u64); // 1.5 USDC
+        let formatted_usdc = format_units(balance_usdc, 6);
+        assert_eq!(formatted_usdc, "1.5");
+    }
+}

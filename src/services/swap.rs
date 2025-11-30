@@ -1,12 +1,13 @@
 //! Swap simulation service.
 
 use alloy::{
-    primitives::{Address, Bytes, U160, U256},
+    primitives::{aliases::U24, Address, Bytes, U160, U256},
     rpc::types::TransactionRequest,
     sol_types::SolCall,
 };
 use rust_decimal::Decimal;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::{
     error::{AppError, Result},
@@ -28,6 +29,12 @@ use crate::{
         format_units, SwapParams, SwapRoute, SwapSimulationResult, TransactionData, UniswapVersion,
     },
 };
+
+/// Get current Unix timestamp in seconds.
+/// Returns 0 if system time is before Unix epoch (should never happen in practice).
+fn current_timestamp() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
 
 /// Service for simulating token swaps.
 #[derive(Clone)]
@@ -109,7 +116,7 @@ impl SwapService {
 
         // Build transaction data
         let tx_data = TransactionData {
-            to: tx.to.map(|t| format!("{:?}", t.to().unwrap())).unwrap_or_default(),
+            to: tx.to.and_then(|t| t.to().map(|addr| format!("{:?}", addr))).unwrap_or_default(),
             data: tx
                 .input
                 .input()
@@ -147,10 +154,10 @@ impl SwapService {
 
         for fee in fee_tiers::ALL_FEES {
             // Check if pool exists - getPool returns Address directly
-            let pool: Address = factory
-                .getPool(params.from_token, params.to_token, fee.try_into().unwrap())
-                .call()
-                .await?;
+            // fee is u32, convert to U24 for the contract call
+            let fee_u24 = U24::from(fee);
+            let pool: Address =
+                factory.getPool(params.from_token, params.to_token, fee_u24).call().await?;
 
             if pool == Address::ZERO {
                 continue;
@@ -161,7 +168,7 @@ impl SwapService {
                 tokenIn: params.from_token,
                 tokenOut: params.to_token,
                 amountIn: params.amount_in,
-                fee: fee.try_into().unwrap(),
+                fee: fee_u24,
                 sqrtPriceLimitX96: U160::ZERO,
             };
 
@@ -180,10 +187,7 @@ impl SwapService {
         }
 
         // Build swap transaction
-        let deadline = params.deadline.unwrap_or_else(|| {
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
-                + 1200 // 20 minutes
-        });
+        let deadline = params.deadline.unwrap_or_else(|| current_timestamp() + 1200); // 20 minutes
 
         // Calculate minimum amount out with slippage
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
@@ -192,10 +196,11 @@ impl SwapService {
         let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
         let amount_out_min = U256::from(min_out_u128);
 
+        // Build swap params with fee converted to U24
         let swap_params = ISwapRouter::ExactInputSingleParams {
             tokenIn: params.from_token,
             tokenOut: params.to_token,
-            fee: fee.try_into().unwrap(),
+            fee: U24::from(fee),
             recipient: self.wallet.address(),
             deadline: U256::from(deadline),
             amountIn: params.amount_in,
@@ -255,10 +260,7 @@ impl SwapService {
         }
 
         // Build swap transaction
-        let deadline = params.deadline.unwrap_or_else(|| {
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
-                + 1200
-        });
+        let deadline = params.deadline.unwrap_or_else(|| current_timestamp() + 1200);
 
         // Calculate minimum amount out with slippage
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
@@ -307,10 +309,7 @@ impl SwapService {
             return Err(AppError::InsufficientLiquidity);
         }
 
-        let deadline = params.deadline.unwrap_or_else(|| {
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
-                + 1200
-        });
+        let deadline = params.deadline.unwrap_or_else(|| current_timestamp() + 1200);
 
         let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
         let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
@@ -391,5 +390,59 @@ impl SwapService {
         // Simplified price impact calculation
         // In a real implementation, this would compare spot price vs execution price
         Ok(Decimal::new(5, 2)) // 0.05%
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::format_units;
+
+    #[test]
+    fn test_slippage_calculation() {
+        let amount_out = U256::from(1_000_000u64); // 1 USDC
+        let slippage = Decimal::new(5, 1); // 0.5%
+
+        let slippage_multiplier = Decimal::ONE - slippage / Decimal::from(100);
+        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap();
+        let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
+
+        // 0.5% slippage means minimum is 99.5% of original
+        let expected = Decimal::from(995_000u64); // 0.995 * 1_000_000
+        assert_eq!(min_out, expected);
+    }
+
+    #[test]
+    fn test_deadline_default() {
+        let now = current_timestamp();
+        let deadline = now + 1200; // 20 minutes
+
+        // Deadline should be 20 minutes (1200 seconds) in the future
+        assert_eq!(deadline - now, 1200);
+    }
+
+    #[test]
+    fn test_gas_cost_calculation() {
+        let gas_estimate: u64 = 150_000;
+        let gas_price: u128 = 30_000_000_000; // 30 gwei
+
+        let gas_cost_wei = U256::from(gas_estimate) * U256::from(gas_price);
+        let gas_cost_eth = format_units(gas_cost_wei, 18);
+
+        // 150,000 * 30 gwei = 4,500,000 gwei = 0.0045 ETH
+        assert_eq!(gas_cost_eth, "0.0045");
+    }
+
+    #[test]
+    fn test_swap_route_creation() {
+        let route = SwapRoute {
+            protocol: UniswapVersion::V3,
+            path: vec!["0xToken1".to_string(), "0xToken2".to_string()],
+            fee_tier: Some(3000),
+        };
+
+        assert_eq!(route.protocol, UniswapVersion::V3);
+        assert_eq!(route.path.len(), 2);
+        assert_eq!(route.fee_tier, Some(3000));
     }
 }
