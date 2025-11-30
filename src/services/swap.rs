@@ -105,9 +105,9 @@ impl SwapService {
         let gas_cost_wei = U256::from(gas_estimate) * U256::from(gas_price);
         let gas_cost_eth = format_units(gas_cost_wei, 18);
 
-        // Calculate price impact (simplified - actual calculation would need pool reserves)
+        // Calculate price impact by comparing spot price vs execution price
         let price_impact =
-            self.calculate_price_impact(&params, amount_out).await.unwrap_or(Decimal::ZERO);
+            self.calculate_price_impact(&params, amount_out, &route).await.unwrap_or(Decimal::ZERO);
 
         // Format amounts
         let amount_in_formatted = format_units(params.amount_in, from_metadata.decimals);
@@ -381,15 +381,127 @@ impl SwapService {
         }
     }
 
-    /// Calculate approximate price impact.
+    /// Calculate approximate price impact by comparing spot price vs execution price.
+    ///
+    /// Price impact measures how much the trade size affects the execution price.
+    /// A higher price impact means the trade is moving the market more significantly.
     async fn calculate_price_impact(
         &self,
-        _params: &SwapParams,
-        _amount_out: U256,
+        params: &SwapParams,
+        amount_out: U256,
+        route: &SwapRoute,
     ) -> Result<Decimal> {
-        // Simplified price impact calculation
-        // In a real implementation, this would compare spot price vs execution price
-        Ok(Decimal::new(5, 2)) // 0.05%
+        // Use a small reference amount to approximate the spot price
+        // This gives us the "marginal" exchange rate without significant price impact
+        let reference_amount = Self::calculate_reference_amount(params.amount_in);
+
+        let spot_output = match route.protocol {
+            UniswapVersion::V3 => {
+                self.get_v3_quote(params, reference_amount, route.fee_tier).await?
+            }
+            UniswapVersion::V2 => self.get_v2_quote(params, reference_amount).await?,
+        };
+
+        // Calculate rates (output per unit of input)
+        // spot_rate = spot_output / reference_amount
+        // execution_rate = amount_out / amount_in
+        //
+        // Price impact = (1 - execution_rate / spot_rate) * 100
+        //              = (1 - (amount_out * reference_amount) / (spot_output * amount_in)) * 100
+
+        let amount_in_u128: u128 = params.amount_in.to_string().parse().unwrap_or(1);
+        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
+        let reference_u128: u128 = reference_amount.to_string().parse().unwrap_or(1);
+        let spot_output_u128: u128 = spot_output.to_string().parse().unwrap_or(1);
+
+        // Avoid division by zero
+        if spot_output_u128 == 0 || amount_in_u128 == 0 {
+            return Ok(Decimal::ZERO);
+        }
+
+        // Use high precision decimals for the calculation
+        let amount_out_dec = Decimal::from(amount_out_u128);
+        let reference_dec = Decimal::from(reference_u128);
+        let spot_output_dec = Decimal::from(spot_output_u128);
+        let amount_in_dec = Decimal::from(amount_in_u128);
+
+        // execution_rate / spot_rate = (amount_out / amount_in) / (spot_output / reference)
+        //                            = (amount_out * reference) / (spot_output * amount_in)
+        let numerator = amount_out_dec * reference_dec;
+        let denominator = spot_output_dec * amount_in_dec;
+
+        if denominator.is_zero() {
+            return Ok(Decimal::ZERO);
+        }
+
+        let rate_ratio = numerator / denominator;
+
+        // Price impact = (1 - rate_ratio) * 100, ensure non-negative
+        let price_impact = (Decimal::ONE - rate_ratio) * Decimal::from(100);
+        let price_impact = price_impact.max(Decimal::ZERO);
+
+        // Round to 4 decimal places
+        Ok(price_impact.round_dp(4))
+    }
+
+    /// Calculate a small reference amount for spot price approximation.
+    /// Uses 0.1% of the actual amount, with minimum and maximum bounds.
+    fn calculate_reference_amount(amount_in: U256) -> U256 {
+        // Use 0.1% of input amount as reference
+        let reference = amount_in / U256::from(1000);
+
+        // Set reasonable bounds
+        let min_reference = U256::from(1_000u64); // Minimum to avoid dust amounts
+        let max_reference = amount_in / U256::from(10); // Max 10% of input
+
+        if reference < min_reference {
+            min_reference.min(amount_in) // Don't exceed the actual input
+        } else if reference > max_reference {
+            max_reference
+        } else {
+            reference
+        }
+    }
+
+    /// Get a V3 quote for a given amount.
+    async fn get_v3_quote(
+        &self,
+        params: &SwapParams,
+        amount_in: U256,
+        fee_tier: Option<u32>,
+    ) -> Result<U256> {
+        let quoter = IQuoterV2::new(UNISWAP_V3_QUOTER, self.client.provider().clone());
+
+        let fee = fee_tier.unwrap_or(3000); // Default to 0.3% tier
+        let fee_u24 = U24::from(fee);
+
+        let quote_params = IQuoterV2::QuoteExactInputSingleParams {
+            tokenIn: params.from_token,
+            tokenOut: params.to_token,
+            amountIn: amount_in,
+            fee: fee_u24,
+            sqrtPriceLimitX96: U160::ZERO,
+        };
+
+        let result = quoter.quoteExactInputSingle(quote_params).call().await?;
+        Ok(result.amountOut)
+    }
+
+    /// Get a V2 quote for a given amount.
+    async fn get_v2_quote(&self, params: &SwapParams, amount_in: U256) -> Result<U256> {
+        let router = IUniswapV2Router02::new(UNISWAP_V2_ROUTER, self.client.provider().clone());
+
+        // Try direct path first
+        let path = vec![params.from_token, params.to_token];
+        match router.getAmountsOut(amount_in, path).call().await {
+            Ok(amounts) => Ok(amounts[1]),
+            Err(_) => {
+                // Try routing through WETH
+                let path_via_weth = vec![params.from_token, WETH_ADDRESS, params.to_token];
+                let amounts = router.getAmountsOut(amount_in, path_via_weth).call().await?;
+                Ok(amounts[2])
+            }
+        }
     }
 }
 
