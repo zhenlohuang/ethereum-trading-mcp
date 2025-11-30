@@ -60,7 +60,27 @@ The server communicates via stdio and follows the MCP protocol.
 cargo test
 ```
 
-### 2. Inspect via MCP Inspector
+### 2. Test Coverage
+
+Generate test coverage reports using `cargo-llvm-cov`:
+
+```bash
+# Install cargo-llvm-cov (one-time setup)
+cargo install cargo-llvm-cov
+
+# Generate text coverage report
+make coverage
+
+# Generate HTML coverage report
+make coverage-html
+
+# Generate LCOV report (for CI/Codecov)
+make coverage-lcov
+```
+
+The HTML report will be available at `target/llvm-cov/html/index.html`.
+
+### 3. Inspect via MCP Inspector
 
 ``` bash
 npx @modelcontextprotocol/inspector --config mcp.dev.json \
