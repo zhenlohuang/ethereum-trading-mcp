@@ -16,7 +16,7 @@ use crate::{
     config::Config,
     error::AppError,
     ethereum::{EthereumClient, WalletManager},
-    services::{BalanceService, PriceService, SwapService, TokenRegistry},
+    services::{BalanceService, PriceService, SwapService, TokenRegistry, TokenRegistryTrait},
     types::{parse_units, QuoteCurrency, SwapParams},
 };
 
@@ -28,7 +28,7 @@ pub struct EthereumTradingServer {
     balance_service: BalanceService,
     price_service: PriceService,
     swap_service: SwapService,
-    token_registry: Arc<TokenRegistry>,
+    token_registry: Arc<dyn TokenRegistryTrait>,
     tool_router: ToolRouter<Self>,
 }
 

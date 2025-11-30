@@ -1652,6 +1652,7 @@ name = "ethereum-trading-mcp"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "async-trait",
  "dotenvy",
  "reqwest",
  "rmcp",

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
+use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
@@ -76,6 +77,35 @@ pub struct TokenEntry {
     pub decimals: u8,
     /// Chain ID.
     pub chain_id: u64,
+}
+
+// ============================================================================
+// Token Registry Trait
+// ============================================================================
+
+/// Trait for token registry operations.
+///
+/// Provides an abstraction for token lookups, allowing different implementations
+/// (e.g., remote fetching, local caching, or mock implementations for testing).
+#[async_trait]
+pub trait TokenRegistryTrait: Send + Sync {
+    /// Resolve a token symbol to a token entry.
+    ///
+    /// # Arguments
+    /// * `symbol` - Token symbol (case-insensitive, e.g., "USDC", "weth")
+    ///
+    /// # Returns
+    /// Token entry if found, None otherwise.
+    async fn resolve_symbol(&self, symbol: &str) -> Option<TokenEntry>;
+
+    /// Look up a token by address.
+    ///
+    /// # Arguments
+    /// * `address` - Token contract address
+    ///
+    /// # Returns
+    /// Token entry if found, None otherwise.
+    async fn lookup_address(&self, address: Address) -> Option<TokenEntry>;
 }
 
 // ============================================================================
@@ -168,7 +198,40 @@ impl TokenRegistry {
         })
     }
 
+    /// Ensure cache is fresh, refreshing if needed.
+    ///
+    /// Uses double-check locking pattern with a semaphore to prevent
+    /// multiple concurrent refresh operations.
+    async fn ensure_fresh(&self) -> Result<()> {
+        // First check without acquiring the semaphore
+        let needs_refresh = {
+            let cache_guard = self.cache.read().await;
+            cache_guard.is_expired(self.cache_ttl)
+        };
+
+        if needs_refresh {
+            // Acquire semaphore to prevent concurrent refreshes
+            let _permit = self.refresh_semaphore.acquire().await.map_err(|_| {
+                AppError::Transport("Failed to acquire refresh semaphore".to_string())
+            })?;
+
+            // Double-check: another task may have refreshed while we waited
+            let still_needs_refresh = {
+                let cache_guard = self.cache.read().await;
+                cache_guard.is_expired(self.cache_ttl)
+            };
+
+            if still_needs_refresh {
+                self.refresh().await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Refresh the token cache from remote source.
+    ///
+    /// # Returns
+    /// The number of tokens loaded into the cache.
     pub async fn refresh(&self) -> Result<usize> {
         info!("Refreshing token list from {}", self.token_list_url);
 
@@ -231,46 +294,36 @@ impl TokenRegistry {
         Ok(count)
     }
 
-    /// Ensure cache is fresh, refreshing if needed.
-    ///
-    /// Uses double-check locking pattern with a semaphore to prevent
-    /// multiple concurrent refresh operations.
-    async fn ensure_fresh(&self) -> Result<()> {
-        // First check without acquiring the semaphore
-        let needs_refresh = {
-            let cache_guard = self.cache.read().await;
-            cache_guard.is_expired(self.cache_ttl)
-        };
-
-        if needs_refresh {
-            // Acquire semaphore to prevent concurrent refreshes
-            let _permit = self.refresh_semaphore.acquire().await.map_err(|_| {
-                AppError::Transport("Failed to acquire refresh semaphore".to_string())
-            })?;
-
-            // Double-check: another task may have refreshed while we waited
-            let still_needs_refresh = {
-                let cache_guard = self.cache.read().await;
-                cache_guard.is_expired(self.cache_ttl)
-            };
-
-            if still_needs_refresh {
-                self.refresh().await?;
-            }
-        }
-        Ok(())
+    /// Get address for a symbol (convenience method).
+    pub async fn get_address(&self, symbol: &str) -> Option<Address> {
+        self.resolve_symbol(symbol).await.map(|t| t.address)
     }
 
-    /// Resolve a token symbol to an address.
-    ///
-    /// If the token is not found in cache, forces a refresh and retries.
-    ///
-    /// # Arguments
-    /// * `symbol` - Token symbol (case-insensitive, e.g., "USDC", "weth")
+    /// Get all cached tokens for the current chain.
+    pub async fn list_tokens(&self) -> Vec<TokenEntry> {
+        if let Err(e) = self.ensure_fresh().await {
+            warn!("Failed to refresh token list: {}", e);
+        }
+
+        let cache_guard = self.cache.read().await;
+        cache_guard.by_symbol.values().filter(|t| t.chain_id == self.chain_id).cloned().collect()
+    }
+
+    /// Get cache statistics.
     ///
     /// # Returns
-    /// Token entry if found, None otherwise.
-    pub async fn resolve_symbol(&self, symbol: &str) -> Option<TokenEntry> {
+    /// A tuple of (token count, cache age).
+    pub async fn cache_stats(&self) -> (usize, Option<Duration>) {
+        let cache_guard = self.cache.read().await;
+        let count = cache_guard.by_symbol.len();
+        let age = cache_guard.last_updated.map(|t| t.elapsed());
+        (count, age)
+    }
+}
+
+#[async_trait]
+impl TokenRegistryTrait for TokenRegistry {
+    async fn resolve_symbol(&self, symbol: &str) -> Option<TokenEntry> {
         // First, ensure cache is fresh
         if let Err(e) = self.ensure_fresh().await {
             warn!("Failed to refresh token list: {}", e);
@@ -298,16 +351,7 @@ impl TokenRegistry {
         cache_guard.by_symbol.get(&key).cloned()
     }
 
-    /// Look up a token by address.
-    ///
-    /// If the token is not found in cache, forces a refresh and retries.
-    ///
-    /// # Arguments
-    /// * `address` - Token contract address
-    ///
-    /// # Returns
-    /// Token entry if found, None otherwise.
-    pub async fn lookup_address(&self, address: Address) -> Option<TokenEntry> {
+    async fn lookup_address(&self, address: Address) -> Option<TokenEntry> {
         // First, ensure cache is fresh
         if let Err(e) = self.ensure_fresh().await {
             warn!("Failed to refresh token list: {}", e);
@@ -333,29 +377,6 @@ impl TokenRegistry {
         // Retry after refresh
         let cache_guard = self.cache.read().await;
         cache_guard.by_address.get(&key).cloned()
-    }
-
-    /// Get address for a symbol (convenience method).
-    pub async fn get_address(&self, symbol: &str) -> Option<Address> {
-        self.resolve_symbol(symbol).await.map(|t| t.address)
-    }
-
-    /// Get all cached tokens for the current chain.
-    pub async fn list_tokens(&self) -> Vec<TokenEntry> {
-        if let Err(e) = self.ensure_fresh().await {
-            warn!("Failed to refresh token list: {}", e);
-        }
-
-        let cache_guard = self.cache.read().await;
-        cache_guard.by_symbol.values().filter(|t| t.chain_id == self.chain_id).cloned().collect()
-    }
-
-    /// Get cache statistics.
-    pub async fn cache_stats(&self) -> (usize, Option<Duration>) {
-        let cache_guard = self.cache.read().await;
-        let count = cache_guard.by_symbol.len();
-        let age = cache_guard.last_updated.map(|t| t.elapsed());
-        (count, age)
     }
 }
 
