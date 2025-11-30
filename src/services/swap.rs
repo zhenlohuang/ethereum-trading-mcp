@@ -1,0 +1,345 @@
+//! Swap simulation service.
+
+use alloy::{
+    primitives::{Address, Bytes, U160, U256},
+    rpc::types::TransactionRequest,
+    sol_types::SolCall,
+};
+use rust_decimal::Decimal;
+use std::sync::Arc;
+
+use crate::{
+    error::{AppError, Result},
+    ethereum::{
+        contracts::{
+            uniswap_v2::{
+                IUniswapV2Factory, IUniswapV2Router02, UNISWAP_V2_FACTORY, UNISWAP_V2_ROUTER,
+            },
+            uniswap_v3::{
+                fee_tiers, IQuoterV2, ISwapRouter, IUniswapV3Factory, UNISWAP_V3_FACTORY,
+                UNISWAP_V3_QUOTER, UNISWAP_V3_ROUTER,
+            },
+            WETH_ADDRESS,
+        },
+        EthereumClient, WalletManager,
+    },
+    services::BalanceService,
+    types::{
+        format_units, SwapParams, SwapRoute, SwapSimulationResult, TransactionData, UniswapVersion,
+    },
+};
+
+/// Service for simulating token swaps.
+#[derive(Clone)]
+pub struct SwapService {
+    client: Arc<EthereumClient>,
+    wallet: WalletManager,
+    balance_service: BalanceService,
+}
+
+impl SwapService {
+    /// Create a new swap service.
+    pub fn new(
+        client: Arc<EthereumClient>,
+        wallet: WalletManager,
+        balance_service: BalanceService,
+    ) -> Self {
+        Self { client, wallet, balance_service }
+    }
+
+    /// Simulate a token swap.
+    pub async fn simulate_swap(&self, params: SwapParams) -> Result<SwapSimulationResult> {
+        tracing::info!(
+            from = %params.from_token,
+            to = %params.to_token,
+            amount = %params.amount_in,
+            slippage = %params.slippage_tolerance,
+            "Simulating swap"
+        );
+
+        // Get token metadata for formatting
+        let from_metadata = self.balance_service.get_token_metadata(params.from_token).await?;
+        let to_metadata = self.balance_service.get_token_metadata(params.to_token).await?;
+
+        // Try V3 first, then V2
+        let (route, amount_out, tx) = match self.try_v3_swap(&params).await {
+            Ok(result) => result,
+            Err(_) => {
+                // Try V2
+                self.try_v2_swap(&params).await?
+            }
+        };
+
+        // Calculate minimum output with slippage
+        let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
+        let amount_out_str = amount_out.to_string();
+        let amount_out_u128: u128 = amount_out_str.parse().unwrap_or(0);
+        let amount_out_min = Decimal::from(amount_out_u128) * slippage_multiplier;
+        let amount_out_min_u128: u128 = amount_out_min.trunc().to_string().parse().unwrap_or(0);
+        let amount_out_min_u256 = U256::from(amount_out_min_u128);
+
+        // Estimate gas
+        let gas_estimate = self.estimate_gas(&tx).await.unwrap_or(200_000);
+        let gas_price = self.client.get_gas_price().await.unwrap_or(30_000_000_000);
+
+        // Calculate gas cost in ETH
+        let gas_cost_wei = U256::from(gas_estimate) * U256::from(gas_price);
+        let gas_cost_eth = format_units(gas_cost_wei, 18);
+
+        // Calculate price impact (simplified - actual calculation would need pool reserves)
+        let price_impact =
+            self.calculate_price_impact(&params, amount_out).await.unwrap_or(Decimal::ZERO);
+
+        // Format amounts
+        let amount_in_formatted = format_units(params.amount_in, from_metadata.decimals);
+        let amount_out_formatted = format_units(amount_out, to_metadata.decimals);
+        let amount_out_min_formatted = format_units(amount_out_min_u256, to_metadata.decimals);
+
+        // Build transaction data
+        let tx_data = TransactionData {
+            to: tx.to.map(|t| format!("{:?}", t.to().unwrap())).unwrap_or_default(),
+            data: tx
+                .input
+                .input()
+                .map(|d| format!("0x{}", alloy::hex::encode(d)))
+                .unwrap_or_default(),
+            value: tx.value.map(|v| v.to_string()).unwrap_or_else(|| "0".to_string()),
+        };
+
+        Ok(SwapSimulationResult {
+            amount_in: amount_in_formatted,
+            amount_out_expected: amount_out_formatted,
+            amount_out_minimum: amount_out_min_formatted,
+            price_impact: price_impact.to_string(),
+            gas_estimate: gas_estimate.to_string(),
+            gas_price: gas_price.to_string(),
+            gas_cost_eth,
+            route,
+            transaction: tx_data,
+        })
+    }
+
+    /// Try to build a V3 swap.
+    async fn try_v3_swap(
+        &self,
+        params: &SwapParams,
+    ) -> Result<(SwapRoute, U256, TransactionRequest)> {
+        let factory = IUniswapV3Factory::new(UNISWAP_V3_FACTORY, self.client.provider().clone());
+        let quoter = IQuoterV2::new(UNISWAP_V3_QUOTER, self.client.provider().clone());
+
+        // Find best fee tier
+        let mut best_fee: Option<u32> = None;
+        let mut best_amount_out = U256::ZERO;
+
+        for fee in fee_tiers::ALL_FEES {
+            // Check if pool exists - getPool returns Address directly
+            let pool: Address = factory
+                .getPool(params.from_token, params.to_token, fee.try_into().unwrap())
+                .call()
+                .await?;
+
+            if pool == Address::ZERO {
+                continue;
+            }
+
+            // Get quote
+            let quote_params = IQuoterV2::QuoteExactInputSingleParams {
+                tokenIn: params.from_token,
+                tokenOut: params.to_token,
+                amountIn: params.amount_in,
+                fee: fee.try_into().unwrap(),
+                sqrtPriceLimitX96: U160::ZERO,
+            };
+
+            if let Ok(result) = quoter.quoteExactInputSingle(quote_params).call().await {
+                if result.amountOut > best_amount_out {
+                    best_amount_out = result.amountOut;
+                    best_fee = Some(fee);
+                }
+            }
+        }
+
+        let fee = best_fee.ok_or(AppError::PoolNotFound)?;
+
+        if best_amount_out == U256::ZERO {
+            return Err(AppError::InsufficientLiquidity);
+        }
+
+        // Build swap transaction
+        let deadline = params.deadline.unwrap_or_else(|| {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+                + 1200 // 20 minutes
+        });
+
+        // Calculate minimum amount out with slippage
+        let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
+        let best_amount_out_u128: u128 = best_amount_out.to_string().parse().unwrap_or(0);
+        let min_out = Decimal::from(best_amount_out_u128) * slippage_multiplier;
+        let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
+        let amount_out_min = U256::from(min_out_u128);
+
+        let swap_params = ISwapRouter::ExactInputSingleParams {
+            tokenIn: params.from_token,
+            tokenOut: params.to_token,
+            fee: fee.try_into().unwrap(),
+            recipient: self.wallet.address(),
+            deadline: U256::from(deadline),
+            amountIn: params.amount_in,
+            amountOutMinimum: amount_out_min,
+            sqrtPriceLimitX96: U160::ZERO,
+        };
+
+        let calldata = ISwapRouter::exactInputSingleCall { params: swap_params }.abi_encode();
+
+        let tx = TransactionRequest::default()
+            .to(UNISWAP_V3_ROUTER)
+            .input(Bytes::from(calldata).into())
+            .from(self.wallet.address());
+
+        let route = SwapRoute {
+            protocol: UniswapVersion::V3,
+            path: vec![format!("{:?}", params.from_token), format!("{:?}", params.to_token)],
+            fee_tier: Some(fee),
+        };
+
+        Ok((route, best_amount_out, tx))
+    }
+
+    /// Try to build a V2 swap.
+    async fn try_v2_swap(
+        &self,
+        params: &SwapParams,
+    ) -> Result<(SwapRoute, U256, TransactionRequest)> {
+        let factory = IUniswapV2Factory::new(UNISWAP_V2_FACTORY, self.client.provider().clone());
+        let router = IUniswapV2Router02::new(UNISWAP_V2_ROUTER, self.client.provider().clone());
+
+        // Check if pair exists - getPair returns Address directly
+        let pair: Address = factory.getPair(params.from_token, params.to_token).call().await?;
+
+        if pair == Address::ZERO {
+            // Try routing through WETH
+            let pair_a: Address = factory.getPair(params.from_token, WETH_ADDRESS).call().await?;
+            let pair_b: Address = factory.getPair(WETH_ADDRESS, params.to_token).call().await?;
+
+            if pair_a == Address::ZERO || pair_b == Address::ZERO {
+                return Err(AppError::PoolNotFound);
+            }
+
+            // Route through WETH
+            return self.build_v2_multihop_swap(params).await;
+        }
+
+        // Get amounts out - returns Vec<U256> directly
+        let path = vec![params.from_token, params.to_token];
+        let amounts: Vec<U256> =
+            router.getAmountsOut(params.amount_in, path.clone()).call().await?;
+
+        let amount_out = amounts[1];
+
+        if amount_out == U256::ZERO {
+            return Err(AppError::InsufficientLiquidity);
+        }
+
+        // Build swap transaction
+        let deadline = params.deadline.unwrap_or_else(|| {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+                + 1200
+        });
+
+        // Calculate minimum amount out with slippage
+        let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
+        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
+        let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
+        let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
+        let amount_out_min = U256::from(min_out_u128);
+
+        let calldata = IUniswapV2Router02::swapExactTokensForTokensCall {
+            amountIn: params.amount_in,
+            amountOutMin: amount_out_min,
+            path,
+            to: self.wallet.address(),
+            deadline: U256::from(deadline),
+        }
+        .abi_encode();
+
+        let tx = TransactionRequest::default()
+            .to(UNISWAP_V2_ROUTER)
+            .input(Bytes::from(calldata).into())
+            .from(self.wallet.address());
+
+        let route = SwapRoute {
+            protocol: UniswapVersion::V2,
+            path: vec![format!("{:?}", params.from_token), format!("{:?}", params.to_token)],
+            fee_tier: None,
+        };
+
+        Ok((route, amount_out, tx))
+    }
+
+    /// Build a V2 swap routing through WETH.
+    async fn build_v2_multihop_swap(
+        &self,
+        params: &SwapParams,
+    ) -> Result<(SwapRoute, U256, TransactionRequest)> {
+        let router = IUniswapV2Router02::new(UNISWAP_V2_ROUTER, self.client.provider().clone());
+
+        let path = vec![params.from_token, WETH_ADDRESS, params.to_token];
+        let amounts: Vec<U256> =
+            router.getAmountsOut(params.amount_in, path.clone()).call().await?;
+
+        let amount_out = amounts[2];
+
+        if amount_out == U256::ZERO {
+            return Err(AppError::InsufficientLiquidity);
+        }
+
+        let deadline = params.deadline.unwrap_or_else(|| {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+                + 1200
+        });
+
+        let slippage_multiplier = Decimal::ONE - params.slippage_tolerance / Decimal::from(100);
+        let amount_out_u128: u128 = amount_out.to_string().parse().unwrap_or(0);
+        let min_out = Decimal::from(amount_out_u128) * slippage_multiplier;
+        let min_out_u128: u128 = min_out.trunc().to_string().parse().unwrap_or(0);
+        let amount_out_min = U256::from(min_out_u128);
+
+        let calldata = IUniswapV2Router02::swapExactTokensForTokensCall {
+            amountIn: params.amount_in,
+            amountOutMin: amount_out_min,
+            path: path.clone(),
+            to: self.wallet.address(),
+            deadline: U256::from(deadline),
+        }
+        .abi_encode();
+
+        let tx = TransactionRequest::default()
+            .to(UNISWAP_V2_ROUTER)
+            .input(Bytes::from(calldata).into())
+            .from(self.wallet.address());
+
+        let route = SwapRoute {
+            protocol: UniswapVersion::V2,
+            path: path.iter().map(|a| format!("{:?}", a)).collect(),
+            fee_tier: None,
+        };
+
+        Ok((route, amount_out, tx))
+    }
+
+    /// Estimate gas for a transaction.
+    async fn estimate_gas(&self, tx: &TransactionRequest) -> Result<u64> {
+        self.client.estimate_gas(tx).await
+    }
+
+    /// Calculate approximate price impact.
+    async fn calculate_price_impact(
+        &self,
+        _params: &SwapParams,
+        _amount_out: U256,
+    ) -> Result<Decimal> {
+        // Simplified price impact calculation
+        // In a real implementation, this would compare spot price vs execution price
+        Ok(Decimal::new(5, 2)) // 0.05%
+    }
+}

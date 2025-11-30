@@ -1,0 +1,19 @@
+{
+    "mcpServers": {
+        "ethereum-trading-mcp": {
+            "type": "stdio",
+            "command": "cargo",
+            "args": [
+                "run",
+                "-p",
+                "ethereum-trading-mcp"
+            ],
+            "env": {
+                "ETHEREUM_RPC_URL": "https://mainnet.infura.io/v3/YOUR_API_KEY",
+                "ETHEREUM_PRIVATE_KEY": "0x...",
+                "ETHEREUM_CHAIN_ID": "1",
+                "LOG_LEVEL": "info"
+            }
+        }
+    }
+}

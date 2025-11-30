@@ -713,8 +713,11 @@ Get current token price in USD or ETH.
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `token_address` | string | Yes | Token contract address |
+| `token_address` | string | Conditional | Token contract address (0x...). Takes priority if both are provided. |
+| `token_symbol` | string | Conditional | Token symbol (e.g., "WETH", "USDC"). Used if `token_address` is not provided. |
 | `quote_currency` | string | No | "USD" or "ETH" (default: "USD") |
+
+> **Note:** At least one of `token_address` or `token_symbol` must be provided. If both are provided, `token_address` takes priority.
 
 **Response:**
 ```json
@@ -815,15 +818,18 @@ When a client requests the tool list via `tools/list`, the server responds with:
         "properties": {
           "token_address": {
             "type": "string",
-            "description": "Token contract address"
+            "description": "Token contract address (0x...). Required if token_symbol is not provided."
+          },
+          "token_symbol": {
+            "type": "string",
+            "description": "Token symbol (e.g., WETH, USDC). Required if token_address is not provided."
           },
           "quote_currency": {
             "type": "string",
             "enum": ["USD", "ETH"],
             "description": "Quote currency for price"
           }
-        },
-        "required": ["token_address"]
+        }
       }
     },
     {
@@ -943,7 +949,7 @@ cargo build --release
 
 ```bash
 # Set required environment variables
-export ETHEREUM_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
+export ETHEREUM_RPC_URL="https://mainnet.infura.io/v3/YOUR_API_KEY"
 export ETHEREUM_PRIVATE_KEY="0x..."
 export LOG_LEVEL="info"
 
