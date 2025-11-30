@@ -1,4 +1,4 @@
-.PHONY: help build test fmt clippy coverage coverage-html clean
+.PHONY: help build test test-unit test-integration test-all fmt clippy coverage coverage-html clean
 
 # Use rustup-managed cargo for coverage (required for llvm-tools-preview)
 RUSTUP_CARGO := $(HOME)/.cargo/bin/cargo
@@ -12,8 +12,15 @@ build: ## Build the project
 build-release: ## Build the project in release mode
 	cargo build --release
 
-test: ## Run tests
-	cargo test
+test: ## Run unit tests
+	cargo test --lib
+
+test-integration: ## Run integration tests (requires .env with ETHEREUM_RPC_URL and ETHEREUM_PRIVATE_KEY)
+	cargo test --tests -- --ignored
+
+test-all: ## Run all tests (unit + integration)
+	cargo test --lib
+	cargo test --tests -- --ignored
 
 fmt: ## Format code
 	cargo fmt

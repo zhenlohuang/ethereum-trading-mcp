@@ -66,6 +66,20 @@ impl PriceService {
             });
         }
 
+        // Special case: USDC priced in USD is always 1:1
+        // (USDC is the USD proxy, so querying USDC/USDC would fail)
+        if token_address == crate::ethereum::contracts::USDC_ADDRESS
+            && quote_currency == QuoteCurrency::USD
+        {
+            return Ok(PriceInfo {
+                token: TokenInfo::erc20(token_address, metadata.symbol.clone(), metadata.decimals),
+                price: "1".to_string(),
+                quote_currency: QuoteCurrency::USD,
+                source: PriceSource::Chainlink, // Nominal source
+                timestamp: current_timestamp(),
+            });
+        }
+
         // Try Chainlink first for USD prices
         if quote_currency == QuoteCurrency::USD {
             if let Some(feed_address) = self.chainlink_feeds.get(&token_address) {

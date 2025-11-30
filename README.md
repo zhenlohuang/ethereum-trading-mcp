@@ -54,13 +54,45 @@ The server communicates via stdio and follows the MCP protocol.
 
 ## Testing
 
-### 1. Run the test suite
+### 1. Run Unit Tests
 
 ```bash
-cargo test
+# Run unit tests
+cargo test --lib
+
+# Or using make
+make test
 ```
 
-### 2. Test Coverage
+### 2. Run Integration Tests
+
+Integration tests require network access to Ethereum mainnet. Make sure you have a `.env` file configured with valid credentials:
+
+```bash
+# .env file
+ETHEREUM_RPC_URL="https://mainnet.infura.io/v3/YOUR_API_KEY"
+ETHEREUM_PRIVATE_KEY="0x..."
+```
+
+Then run integration tests:
+
+```bash
+# Run integration tests
+cargo test --test integration_tests -- --ignored
+
+# Or using make
+make test-integration
+
+# Run all tests (unit + integration)
+make test-all
+```
+
+The integration tests cover all three MCP tools:
+- **get_balance**: ETH and ERC20 balance queries, error handling
+- **get_token_price**: Price queries from Chainlink and Uniswap, various tokens
+- **swap_tokens**: Swap simulations, slippage handling, error cases
+
+### 3. Test Coverage
 
 Generate test coverage reports using `cargo-llvm-cov`:
 
@@ -80,7 +112,7 @@ make coverage-lcov
 
 The HTML report will be available at `target/llvm-cov/html/index.html`.
 
-### 3. Inspect via MCP Inspector
+### 4. Inspect via MCP Inspector
 
 ``` bash
 npx @modelcontextprotocol/inspector --config mcp.dev.json \

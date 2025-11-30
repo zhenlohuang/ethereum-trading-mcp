@@ -5,3 +5,4 @@
 pub mod server;
 
 pub use server::EthereumTradingServer;
+pub use server::{GetBalanceInput, GetTokenPriceInput, SwapTokensInput};

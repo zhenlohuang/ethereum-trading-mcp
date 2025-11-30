@@ -14,6 +14,12 @@ use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
 
 use crate::error::{AppError, Result};
+use alloy::primitives::address;
+
+use crate::ethereum::contracts::{USDC_ADDRESS, WBTC_ADDRESS, WETH_ADDRESS};
+
+/// UNI token address (mainnet).
+const UNI_ADDRESS: Address = address!("1f9840a85d5aF5bf1D1762F925BDADdC4201F984");
 
 // ============================================================================
 // Token List Sources
@@ -133,6 +139,14 @@ impl CacheState {
             None => true,
         }
     }
+
+    /// Insert a token entry into both indexes.
+    fn insert(&mut self, entry: TokenEntry) {
+        let symbol_key = (entry.chain_id, entry.symbol.to_uppercase());
+        let address_key = (entry.chain_id, entry.address);
+        self.by_symbol.insert(symbol_key, entry.clone());
+        self.by_address.insert(address_key, entry);
+    }
 }
 
 /// Token Registry with caching support.
@@ -188,14 +202,65 @@ impl TokenRegistry {
             .build()
             .map_err(|e| AppError::Transport(format!("Failed to create HTTP client: {}", e)))?;
 
-        Ok(Self {
+        let registry = Self {
             client,
             token_list_url,
             chain_id,
             cache_ttl,
             cache: Arc::new(RwLock::new(CacheState::new())),
             refresh_semaphore: Semaphore::new(1),
-        })
+        };
+
+        // Pre-populate with well-known mainnet tokens as fallback
+        if chain_id == 1 {
+            registry.populate_fallback_tokens();
+        }
+
+        Ok(registry)
+    }
+
+    /// Pre-populate cache with well-known mainnet tokens.
+    /// These serve as fallbacks when remote token list is unavailable.
+    fn populate_fallback_tokens(&self) {
+        let fallback_tokens = vec![
+            TokenEntry {
+                address: WETH_ADDRESS,
+                symbol: "WETH".to_string(),
+                name: "Wrapped Ether".to_string(),
+                decimals: 18,
+                chain_id: 1,
+            },
+            TokenEntry {
+                address: USDC_ADDRESS,
+                symbol: "USDC".to_string(),
+                name: "USD Coin".to_string(),
+                decimals: 6,
+                chain_id: 1,
+            },
+            TokenEntry {
+                address: WBTC_ADDRESS,
+                symbol: "WBTC".to_string(),
+                name: "Wrapped BTC".to_string(),
+                decimals: 8,
+                chain_id: 1,
+            },
+            TokenEntry {
+                address: UNI_ADDRESS,
+                symbol: "UNI".to_string(),
+                name: "Uniswap".to_string(),
+                decimals: 18,
+                chain_id: 1,
+            },
+        ];
+
+        // Use try_write to avoid blocking - this is best-effort
+        if let Ok(mut cache_guard) = self.cache.try_write() {
+            let count = fallback_tokens.len();
+            for token in fallback_tokens {
+                cache_guard.insert(token);
+            }
+            info!("Pre-populated {} fallback tokens for mainnet", count);
+        }
     }
 
     /// Ensure cache is fresh, refreshing if needed.

@@ -447,21 +447,25 @@ impl SwapService {
         }
 
         // Use high precision decimals for the calculation
+        // Calculate rate_ratio = (amount_out / amount_in) / (spot_output / reference)
+        // To avoid overflow when multiplying large numbers, we divide first
         let amount_out_dec = Decimal::from(amount_out_u128);
-        let reference_dec = Decimal::from(reference_u128);
-        let spot_output_dec = Decimal::from(spot_output_u128);
         let amount_in_dec = Decimal::from(amount_in_u128);
+        let spot_output_dec = Decimal::from(spot_output_u128);
+        let reference_dec = Decimal::from(reference_u128);
 
-        // execution_rate / spot_rate = (amount_out / amount_in) / (spot_output / reference)
-        //                            = (amount_out * reference) / (spot_output * amount_in)
-        let numerator = amount_out_dec * reference_dec;
-        let denominator = spot_output_dec * amount_in_dec;
+        // execution_rate = amount_out / amount_in
+        let execution_rate = amount_out_dec / amount_in_dec;
 
-        if denominator.is_zero() {
+        // spot_rate = spot_output / reference
+        let spot_rate = spot_output_dec / reference_dec;
+
+        if spot_rate.is_zero() {
             return Ok(Decimal::ZERO);
         }
 
-        let rate_ratio = numerator / denominator;
+        // rate_ratio = execution_rate / spot_rate
+        let rate_ratio = execution_rate / spot_rate;
 
         // Price impact = (1 - rate_ratio) * 100, ensure non-negative
         let price_impact = (Decimal::ONE - rate_ratio) * Decimal::from(100);

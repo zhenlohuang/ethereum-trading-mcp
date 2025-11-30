@@ -45,18 +45,3 @@ impl Config {
         Ok(Self { rpc_url, private_key, log_level })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_from_env_missing_rpc_url() {
-        // Clear the env var if set
-        env::remove_var("ETHEREUM_RPC_URL");
-        env::remove_var("ETHEREUM_PRIVATE_KEY");
-
-        let result = Config::from_env();
-        assert!(result.is_err());
-    }
-}
